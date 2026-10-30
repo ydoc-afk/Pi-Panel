@@ -1,0 +1,127 @@
+import { DatabaseSync } from 'node:sqlite';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  username TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  container_id TEXT,
+  status TEXT NOT NULL,
+  repo TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS github_account (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  login TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  token_enc TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS providers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  pi_key TEXT NOT NULL UNIQUE,
+  base_url TEXT,
+  api_key_enc TEXT,
+  models TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  norm_name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  type TEXT NOT NULL,
+  command TEXT,
+  args TEXT NOT NULL,
+  cwd TEXT,
+  url TEXT,
+  env TEXT NOT NULL,
+  headers TEXT NOT NULL,
+  exposure TEXT,
+  timeout INTEGER,
+  default_hidden TEXT NOT NULL,
+  image TEXT,
+  port INTEGER,
+  ready_log TEXT,
+  mount_samples INTEGER NOT NULL DEFAULT 0,
+  memory_mb INTEGER,
+  discovery TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_mcp (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  server_id INTEGER NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL,
+  hidden_tools TEXT,
+  container_id TEXT,
+  PRIMARY KEY (project_id, server_id)
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL,
+  pi_session_file TEXT,
+  provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+  model_id TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_events (
+  session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  data TEXT NOT NULL,
+  PRIMARY KEY (session_id, seq)
+);
+`;
+
+export function openDb(path: string): DatabaseSync {
+  const db = new DatabaseSync(path);
+  db.exec('PRAGMA foreign_keys = ON');
+  db.exec(SCHEMA);
+  addMissingColumns(db, 'projects', { repo: 'TEXT' });
+  addMissingColumns(db, 'mcp_servers', {
+    image: 'TEXT',
+    port: 'INTEGER',
+    ready_log: 'TEXT',
+    mount_samples: 'INTEGER NOT NULL DEFAULT 0',
+    memory_mb: 'INTEGER',
+  });
+  addMissingColumns(db, 'project_mcp', { container_id: 'TEXT' });
+  addMissingColumns(db, 'sessions', {
+    provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
+    model_id: 'TEXT',
+  });
+  return db;
+}
+
+export function openDefaultDb(): DatabaseSync {
+  const dir = process.env.DATA_DIR ?? './data';
+  mkdirSync(dir, { recursive: true });
+  return openDb(join(dir, 'pi-panel.db'));
+}
+
+/** Upgrades databases created before a column existed (CREATE TABLE IF NOT EXISTS skips them). */
+function addMissingColumns(db: DatabaseSync, table: string, columns: Record<string, string>) {
+  const have = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  for (const [name, def] of Object.entries(columns)) {
+    if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+  }
+}
