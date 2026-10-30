@@ -15,11 +15,15 @@ import {
   deleteProvider,
   discoverModels,
   listProviders,
+  testProvider,
   updateProvider,
   type Provider,
   type ProviderKind,
 } from './api.js';
 import { ErrorText } from './ui.js';
+
+// Mirrors the server's rule for provider names.
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
 
 const KIND_LABEL: Record<ProviderKind, string> = {
   'openai-compatible': 'OpenAI-compatible (llama.cpp, Unsloth Studio, ...)',
@@ -43,6 +47,34 @@ function ProviderForm({
   const [models, setModels] = useState(initial?.models.join(', ') ?? '');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: true; count: number } | { ok: false; message: string } | null
+  >(null);
+
+  // Uses the settings in the form and checks them against the server. Nothing is saved.
+  async function testConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const found = await testProvider({
+        kind: initial?.kind ?? kind,
+        baseUrl,
+        ...(apiKey ? { apiKey } : {}),
+        ...(initial ? { providerId: initial.id } : {}),
+      });
+      setTestResult({ ok: true, count: found.length });
+      // Fill the model list from the server only when it is still empty, so typed values stay.
+      if (!models.trim()) setModels(found.join(', '));
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Connection test failed',
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -87,7 +119,17 @@ function ProviderForm({
             onChange={(v) => v && setKind(v as ProviderKind)}
           />
         )}
-        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        <TextInput
+          label="Name"
+          description="Letters, digits, spaces, dots, dashes and underscores, up to 64 characters"
+          error={
+            name && !NAME_RE.test(name.trim())
+              ? 'Name has characters that are not allowed'
+              : undefined
+          }
+          value={name}
+          onChange={(e) => setName(e.currentTarget.value)}
+        />
         <TextInput
           label="Base URL"
           placeholder={compat ? 'http://host.docker.internal:8080/v1' : 'Optional, e.g. a proxy'}
@@ -109,10 +151,23 @@ function ProviderForm({
           value={models}
           onChange={(e) => setModels(e.currentTarget.value)}
         />
+        {testResult &&
+          (testResult.ok ? (
+            <Text size="sm" c="green">
+              Connected: found {testResult.count} model{testResult.count === 1 ? '' : 's'}.
+            </Text>
+          ) : (
+            <Text size="sm" c="red">
+              {testResult.message}
+            </Text>
+          ))}
         <ErrorText error={error} />
         <Group gap="xs">
-          <Button type="submit" disabled={busy || !name.trim()}>
+          <Button type="submit" disabled={busy || !NAME_RE.test(name.trim())}>
             {initial ? 'Save' : 'Add provider'}
+          </Button>
+          <Button variant="default" loading={testing} onClick={() => void testConnection()}>
+            Test connection
           </Button>
           {onCancel && (
             <Button type="button" variant="default" onClick={onCancel}>

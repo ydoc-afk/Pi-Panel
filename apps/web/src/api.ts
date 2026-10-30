@@ -135,6 +135,9 @@ export const listProviders = async () =>
   (await request<{ providers: Provider[] }>('/api/providers')).providers;
 export const createProvider = async (input: ProviderInput) =>
   (await request<{ provider: Provider }>('/api/providers', send('POST', input))).provider;
+/** Lists the models a provider would expose, from the settings in the form. Nothing is saved. */
+export const testProvider = async (input: Omit<ProviderInput, 'name'> & { providerId?: number }) =>
+  (await request<{ models: string[] }>('/api/providers/test', send('POST', input))).models;
 export const updateProvider = async (id: number, input: ProviderInput) =>
   (await request<{ provider: Provider }>(`/api/providers/${id}`, send('PUT', input))).provider;
 export const deleteProvider = (id: number) =>
