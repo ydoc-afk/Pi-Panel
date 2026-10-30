@@ -1,12 +1,41 @@
 import { useEffect, useReducer, useRef, useState, type FormEvent } from 'react';
-import { Button, Group, Paper, ScrollArea, Stack, Text, TextInput } from '@mantine/core';
+import { Button, Group, Stack, Text, TextInput } from '@mantine/core';
 import { abortSession, fetchEvents, openStream, sendPrompt } from './api.js';
 import { applyMessage, emptyTranscript, type Transcript } from './transcript.js';
 import type { StreamMessage } from './api.js';
 import { ErrorText } from './ui.js';
 
-const LABEL = { user: 'You', assistant: 'Pi', tool: 'Tool', notice: 'Notice' } as const;
-const COLOR = { user: 'teal', assistant: 'dark', tool: 'dimmed', notice: 'orange' } as const;
+// A terminal looks the same in light and dark mode, so these colours are fixed.
+const TERM = {
+  bg: '#0b0f14',
+  bar: '#161b22',
+  fg: '#d6dde6',
+  dim: '#6b7785',
+  prompt: '#4fd1c5',
+  tool: '#8b9bb4',
+  warn: '#e3b341',
+  border: '#2a313c',
+};
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
+
+/** How each kind of transcript line reads in the terminal. */
+function Line({ kind, text }: { kind: string; text: string }) {
+  if (kind === 'user') {
+    return (
+      <div style={{ color: TERM.fg, fontWeight: 600 }}>
+        <span style={{ color: TERM.prompt }}>❯ </span>
+        {text}
+      </div>
+    );
+  }
+  if (kind === 'tool') {
+    return <div style={{ color: TERM.tool }}>{`  ⚙ ${text}`}</div>;
+  }
+  if (kind === 'notice') {
+    return <div style={{ color: TERM.warn }}>{`  ⚠ ${text}`}</div>;
+  }
+  return <div style={{ color: TERM.fg }}>{text}</div>;
+}
 
 export function SessionView({ sessionId }: { sessionId: number }) {
   const [t, push] = useReducer(
@@ -17,6 +46,7 @@ export function SessionView({ sessionId }: { sessionId: number }) {
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const lastSeq = useRef(0);
+  const screen = useRef<HTMLDivElement>(null);
   lastSeq.current = t.lastSeq;
 
   useEffect(() => {
@@ -57,6 +87,12 @@ export function SessionView({ sessionId }: { sessionId: number }) {
     };
   }, [sessionId]);
 
+  // Keep the newest output in view, as a terminal does.
+  useEffect(() => {
+    const el = screen.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [t.items.length, t.streaming]);
+
   async function submit(e: FormEvent) {
     e.preventDefault();
     const message = text.trim();
@@ -72,52 +108,86 @@ export function SessionView({ sessionId }: { sessionId: number }) {
 
   return (
     <Stack gap="sm">
-      <Paper withBorder radius="md" p="md">
-        <ScrollArea h={420} type="auto" offsetScrollbars>
-          <Stack gap="xs">
-            {t.items.map((item, i) => (
-              <Text key={i} size="sm" c={COLOR[item.kind]} style={{ whiteSpace: 'pre-wrap' }}>
-                <Text span fw={700} inherit>
-                  {LABEL[item.kind]}:
-                </Text>{' '}
-                {item.text}
-              </Text>
-            ))}
-            {t.streaming && (
-              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                <Text span fw={700} inherit>
-                  Pi:
-                </Text>{' '}
-                {t.streaming}
-              </Text>
-            )}
-          </Stack>
-        </ScrollArea>
-      </Paper>
-      <ErrorText error={error} />
-      <form onSubmit={submit}>
-        <Group gap="xs" wrap="nowrap">
-          <TextInput
-            style={{ flex: 1 }}
-            placeholder={t.running ? 'Steer the running agent...' : 'Send a prompt...'}
-            value={text}
-            onChange={(e) => setText(e.currentTarget.value)}
-          />
-          <Button type="submit" disabled={!text.trim()}>
-            {t.running ? 'Steer' : 'Send'}
-          </Button>
-          {t.running && (
-            <Button
-              type="button"
-              variant="light"
-              color="red"
-              onClick={() => void abortSession(sessionId).catch((e: Error) => setError(e.message))}
-            >
-              Stop
-            </Button>
+      <style>{'@keyframes pp-cursor { 50% { opacity: 0; } }'}</style>
+      <div
+        style={{
+          background: TERM.bg,
+          border: `1px solid ${TERM.border}`,
+          borderRadius: 10,
+          overflow: 'hidden',
+          fontFamily: MONO,
+          fontSize: 13,
+          lineHeight: 1.5,
+        }}
+      >
+        <div
+          style={{
+            background: TERM.bar,
+            padding: '6px 12px',
+            color: TERM.dim,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            borderBottom: `1px solid ${TERM.border}`,
+          }}
+        >
+          <span style={{ color: '#ff5f56' }}>●</span>
+          <span style={{ color: '#ffbd2e' }}>●</span>
+          <span style={{ color: '#27c93f' }}>●</span>
+          <span style={{ marginLeft: 8 }}>pi {t.running ? '· working…' : ''}</span>
+        </div>
+        <div
+          ref={screen}
+          style={{ height: 460, overflowY: 'auto', padding: '12px 16px', whiteSpace: 'pre-wrap' }}
+        >
+          {t.items.map((item, i) => (
+            <Line key={i} kind={item.kind} text={item.text} />
+          ))}
+          {t.streaming && (
+            <div style={{ color: TERM.fg }}>
+              {t.streaming}
+              <span style={{ animation: 'pp-cursor 1s steps(1) infinite' }}>▋</span>
+            </div>
           )}
-        </Group>
-      </form>
+          <form onSubmit={submit} style={{ display: 'flex', alignItems: 'center', marginTop: 6 }}>
+            <span style={{ color: TERM.prompt, fontWeight: 600, whiteSpace: 'pre' }}>❯ </span>
+            <TextInput
+              variant="unstyled"
+              style={{ flex: 1 }}
+              aria-label={t.running ? 'Steer the running agent' : 'Send a prompt'}
+              placeholder={t.running ? 'steer the running agent…' : 'send a prompt…'}
+              value={text}
+              onChange={(e) => setText(e.currentTarget.value)}
+              styles={{
+                input: {
+                  color: TERM.fg,
+                  fontFamily: MONO,
+                  fontSize: 13,
+                  minHeight: 0,
+                  height: 'auto',
+                  padding: 0,
+                },
+              }}
+            />
+          </form>
+        </div>
+      </div>
+      <ErrorText error={error} />
+      <Group gap="xs">
+        <Text size="xs" c="dimmed">
+          Enter sends{t.running ? ' a steering message' : ' a prompt'}.
+        </Text>
+        {t.running && (
+          <Button
+            type="button"
+            variant="light"
+            color="red"
+            onClick={() => void abortSession(sessionId).catch((e: Error) => setError(e.message))}
+          >
+            Stop
+          </Button>
+        )}
+      </Group>
     </Stack>
   );
 }
