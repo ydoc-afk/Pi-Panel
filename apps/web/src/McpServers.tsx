@@ -23,12 +23,13 @@ import {
 } from './api.js';
 import { McpServerForm } from './McpServerForm.js';
 import { ReaBuilder } from './ReaBuilder.js';
+import { RegistryBrowser, registryNotes, registryPreset } from './RegistryBrowser.js';
 import { McpToolList } from './McpToolList.js';
 import { Collapsible, ErrorText, mono } from './ui.js';
 
 type Mode =
   | { kind: 'none' }
-  | { kind: 'form'; preset?: McpServerInput & { name: string } }
+  | { kind: 'form'; preset?: McpServerInput & { name: string }; notes?: string[] }
   | { kind: 'import' }
   | { kind: 'edit'; id: number };
 
@@ -157,14 +158,27 @@ export function McpServers() {
         </Group>
       )}
 
+      {mode.kind === 'none' && (
+        <Collapsible title="Find servers in the MCP registry" defaultOpen={false}>
+          <RegistryBrowser
+            onAdd={(item) =>
+              setMode({
+                kind: 'form',
+                preset: registryPreset(item),
+                notes: registryNotes(item),
+              })
+            }
+          />
+        </Collapsible>
+      )}
+
       {mode.kind === 'form' && (
         <Stack gap="xs">
-          {mode.preset &&
-            presetNotes(mode.preset).map((n) => (
-              <Text key={n} size="sm" c="orange">
-                {n}
-              </Text>
-            ))}
+          {(mode.notes ?? (mode.preset ? presetNotes(mode.preset) : [])).map((n) => (
+            <Text key={n} size="sm" c="orange">
+              {n}
+            </Text>
+          ))}
           <McpServerForm
             preset={mode.preset}
             onSaved={saved}
