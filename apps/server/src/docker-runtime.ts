@@ -149,6 +149,8 @@ export class DockerRuntime implements ContainerRuntime {
         MemorySwap: 1024 * 1024 * 1024,
         NanoCpus: 1_000_000_000,
         PidsLimit: 256,
+        // Servers that run on the Docker host (Ghidra, llama.cpp) are reached by this name.
+        ...(spec.networkDisabled ? {} : { ExtraHosts: ['host.docker.internal:host-gateway'] }),
         CapDrop: ['ALL'],
         SecurityOpt: ['no-new-privileges'],
       },

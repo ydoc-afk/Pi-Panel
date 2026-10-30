@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
+import type { McpStore } from './mcp-store.js';
 import type { ProviderStore } from './providers.js';
 import { RpcClient, type PiEvent } from './rpc-client.js';
 import type { ContainerRuntime } from './runtime.js';
@@ -52,12 +53,15 @@ export class SessionManager {
   private intentionalStops = new Set<RpcClient>();
   private listeners = new Map<number, Set<(m: StreamMessage) => void>>();
   private seqs = new Map<number, number>();
+  /** Sessions whose pi process should be replaced as soon as their current run settles. */
+  private restartWhenIdle = new Set<number>();
 
   constructor(
     private readonly db: DatabaseSync,
     private readonly runtime: ContainerRuntime,
     private readonly providers: ProviderStore,
     private readonly dataDir: string,
+    private readonly mcp: McpStore,
   ) {
     // No pi process survives a panel restart, so nothing can still be running.
     db.prepare("UPDATE sessions SET status = 'idle' WHERE status = 'running'").run();
@@ -182,8 +186,11 @@ export class SessionManager {
     let running = 0;
     for (const { id, status } of rows) {
       if (!this.live.has(id)) continue;
-      if (status === 'running') running++;
-      else {
+      if (status === 'running') {
+        // Let the run finish, then replace the process so it picks up the new configuration.
+        this.restartWhenIdle.add(id);
+        running++;
+      } else {
         this.stop(id);
         stopped++;
       }
@@ -200,6 +207,7 @@ export class SessionManager {
   }
 
   private stopClient(id: number, client: RpcClient) {
+    this.restartWhenIdle.delete(id);
     this.intentionalStops.add(client);
     if (this.live.get(id) === client) this.live.delete(id);
     client.close();
@@ -234,7 +242,7 @@ export class SessionManager {
     const provider = row.provider_id ? this.providers.find(row.provider_id) : undefined;
     let proc;
     try {
-      await this.writeModelsJson(row.project_id);
+      const mcp = await this.writeAgentConfig(row.project_id);
       proc = await this.runtime.exec(project.container_id, {
         cmd,
         workdir: '/workspace',
@@ -242,6 +250,8 @@ export class SessionManager {
         env: {
           PI_CODING_AGENT_DIR: SANDBOX_AGENT_DIR,
           ...(provider ? this.providers.envFor(provider.id) : {}),
+          // Values for the ${VAR} references in mcp.json, for this project's enabled servers only.
+          ...mcp.env,
         },
       });
     } catch {
@@ -276,15 +286,20 @@ export class SessionManager {
     return client;
   }
 
-  /** Writes the keyless models.json that pi reads from the project's agent dir. */
-  private async writeModelsJson(projectId: number) {
+  /** Writes the keyless config files pi reads from the project's agent dir. */
+  private async writeAgentConfig(projectId: number) {
     const dir = agentDir(this.dataDir, projectId);
     await mkdir(dir, { recursive: true });
-    const tmp = join(dir, 'models.json.tmp');
-    await writeFile(tmp, JSON.stringify(this.providers.modelsJson(), null, 2) + '\n', {
-      mode: 0o644,
-    });
-    await rename(tmp, join(dir, 'models.json'));
+    const write = async (name: string, content: object) => {
+      const tmp = join(dir, `${name}.tmp`);
+      await writeFile(tmp, JSON.stringify(content, null, 2) + '\n', { mode: 0o644 });
+      await rename(tmp, join(dir, name));
+    };
+    await write('models.json', this.providers.modelsJson());
+    // Always written, even when empty, so servers removed in the panel do not linger in the file.
+    const mcp = this.mcp.projectConfig(projectId);
+    await write('mcp.json', mcp.config);
+    return mcp;
   }
 
   private handleClose(id: number, client: RpcClient, code: number | null, stderr: string) {
@@ -322,6 +337,7 @@ export class SessionManager {
     if (event.type === 'agent_start') this.setStatus(id, 'running');
     else if (event.type === 'agent_settled') this.setStatus(id, 'idle');
     for (const send of this.listeners.get(id) ?? []) send({ seq, event });
+    if (event.type === 'agent_settled' && this.restartWhenIdle.delete(id)) this.stop(id);
   }
 
   private setStatus(id: number, status: string) {

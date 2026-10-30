@@ -38,7 +38,9 @@ export class Secrets {
 
   decrypt(blob: string): string {
     const [version, iv, tag, ct] = blob.split(':');
-    if (version !== 'v1' || !iv || !tag || !ct) throw new Error('Unsupported secret format');
+    // ct is legitimately empty for an empty plaintext, so only a missing part is malformed.
+    if (version !== 'v1' || !iv || !tag || ct === undefined)
+      throw new Error('Unsupported secret format');
     const decipher = createDecipheriv('aes-256-gcm', this.getKey(), Buffer.from(iv, 'base64'));
     decipher.setAuthTag(Buffer.from(tag, 'base64'));
     return Buffer.concat([decipher.update(Buffer.from(ct, 'base64')), decipher.final()]).toString(

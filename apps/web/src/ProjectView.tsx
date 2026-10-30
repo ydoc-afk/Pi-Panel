@@ -11,6 +11,7 @@ import {
 import { GitHubPanel } from './GitHubPanel.js';
 import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
+import { ProjectMcp } from './ProjectMcp.js';
 import { SessionView } from './SessionView.js';
 
 export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
@@ -62,6 +63,7 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
       <button onClick={onBack}>&larr; Projects</button>
       <h2>{project.name}</h2>
       <GitHubPanel projectId={project.id} />
+      <ProjectMcp projectId={project.id} />
       <Packages projectId={project.id} />
       <Lab projectId={project.id} />
       {error && (

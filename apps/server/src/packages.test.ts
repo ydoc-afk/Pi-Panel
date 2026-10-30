@@ -363,6 +363,8 @@ describe('packages', () => {
       expect(rpcProcesses()[0]!.exited).toBe(false);
       await t.call('POST', `/api/sessions/${s.id}/abort`);
       await until(async () => (await status(s.id)) === 'idle');
+      // once the run has settled, the process is replaced so the next prompt loads the new package
+      await until(() => rpcProcesses()[0]!.exited);
     });
   });
 });

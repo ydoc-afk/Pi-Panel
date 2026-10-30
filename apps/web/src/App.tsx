@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { AuthForm } from './AuthForm.js';
 import { GitHubAccount } from './GitHubAccount.js';
+import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
 import { Providers } from './Providers.js';
 import { getStatus, logout, type AuthStatus, type User } from './api.js';
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [tab, setTab] = useState<'projects' | 'providers' | 'github'>('projects');
+  const [tab, setTab] = useState<'projects' | 'providers' | 'mcp' | 'github'>('projects');
 
   useEffect(() => {
     getStatus()
@@ -37,12 +38,16 @@ export function App() {
             <button aria-pressed={tab === 'providers'} onClick={() => setTab('providers')}>
               Providers
             </button>
+            <button aria-pressed={tab === 'mcp'} onClick={() => setTab('mcp')}>
+              MCP
+            </button>
             <button aria-pressed={tab === 'github'} onClick={() => setTab('github')}>
               GitHub
             </button>
           </nav>
           {tab === 'projects' && <Projects />}
           {tab === 'providers' && <Providers />}
+          {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}
         </>
       ) : (

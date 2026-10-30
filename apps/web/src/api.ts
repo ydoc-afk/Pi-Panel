@@ -304,3 +304,125 @@ export const scaffoldLabPackage = (projectId: number, name: string, kinds: LabKi
   );
 export const runLab = (projectId: number, path: string, tests: LabTest[]) =>
   request<LabRun>(`/api/projects/${projectId}/lab/run`, send('POST', { path, tests }));
+
+export interface McpEntry {
+  key: string;
+  secret: boolean;
+  /** Only present for non-secret entries. */
+  value?: string;
+  hasValue: boolean;
+}
+
+export interface McpTool {
+  name: string;
+  description: string;
+  annotations: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+}
+
+export interface McpDiscovery {
+  state: 'connected' | 'failed' | 'disabled' | 'timeout' | 'error';
+  error: string | null;
+  tools: McpTool[];
+  discoveredAt: number;
+  piVersion: string | null;
+}
+
+export type McpExposure = 'direct' | 'codemode' | 'deferred' | 'hidden';
+
+export interface McpServer {
+  id: number;
+  name: string;
+  description: string | null;
+  type: 'stdio' | 'http';
+  command: string | null;
+  args: string[];
+  cwd: string | null;
+  url: string | null;
+  env: McpEntry[];
+  headers: McpEntry[];
+  exposure: McpExposure | null;
+  timeout: number | null;
+  defaultHidden: string[];
+  discovery: McpDiscovery | null;
+  createdAt: number;
+}
+
+export interface McpEntryInput {
+  key: string;
+  value?: string;
+  secret: boolean;
+}
+
+export interface McpServerInput {
+  name?: string;
+  type?: 'stdio' | 'http';
+  description?: string;
+  command?: string;
+  args?: string[];
+  cwd?: string;
+  url?: string;
+  env?: McpEntryInput[];
+  headers?: McpEntryInput[];
+  exposure?: McpExposure | null;
+  timeout?: number | null;
+}
+
+export interface McpPreset {
+  id: string;
+  title: string;
+  description: string;
+  notes: string[];
+  server: McpServerInput & { name: string };
+}
+
+export interface McpProjectServer {
+  server: McpServer;
+  enabled: boolean;
+  hiddenOverride: string[] | null;
+  hiddenTools: string[];
+}
+
+export interface McpApplied {
+  restartedSessions: number;
+  pendingSessions: number;
+}
+
+export const listMcpServers = async () =>
+  (await request<{ servers: McpServer[] }>('/api/mcp/servers')).servers;
+export const listMcpPresets = async () =>
+  (await request<{ presets: McpPreset[] }>('/api/mcp/presets')).presets;
+export const createMcpServer = async (input: McpServerInput) =>
+  (await request<{ server: McpServer }>('/api/mcp/servers', send('POST', input))).server;
+export const updateMcpServer = (id: number, input: McpServerInput) =>
+  request<{ server: McpServer } & McpApplied>(`/api/mcp/servers/${id}`, send('PUT', input));
+export const deleteMcpServer = (id: number) =>
+  request<McpApplied>(`/api/mcp/servers/${id}`, { method: 'DELETE' });
+export const setMcpDefaultHidden = (id: number, hidden: string[]) =>
+  request<{ server: McpServer } & McpApplied>(
+    `/api/mcp/servers/${id}/hidden`,
+    send('PUT', { hidden }),
+  );
+export const discoverMcp = async (id: number) =>
+  (await request<{ server: McpServer }>(`/api/mcp/servers/${id}/discover`, send('POST', {})))
+    .server;
+export const importMcp = (json: unknown, name?: string) =>
+  request<{ servers: McpServer[]; warnings: string[] }>(
+    '/api/mcp/import',
+    send('POST', { json, ...(name ? { name } : {}) }),
+  );
+export const listProjectMcp = async (projectId: number) =>
+  (await request<{ servers: McpProjectServer[] }>(`/api/projects/${projectId}/mcp`)).servers;
+export const setProjectMcp = (
+  projectId: number,
+  serverId: number,
+  change: { enabled?: boolean; hiddenTools?: string[] | null },
+) =>
+  request<{ servers: McpProjectServer[] } & McpApplied>(
+    `/api/projects/${projectId}/mcp/${serverId}`,
+    send('PUT', change),
+  );

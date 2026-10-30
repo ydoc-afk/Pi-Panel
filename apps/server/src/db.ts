@@ -39,6 +39,31 @@ CREATE TABLE IF NOT EXISTS providers (
   models TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mcp_servers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  norm_name TEXT NOT NULL UNIQUE,
+  description TEXT,
+  type TEXT NOT NULL,
+  command TEXT,
+  args TEXT NOT NULL,
+  cwd TEXT,
+  url TEXT,
+  env TEXT NOT NULL,
+  headers TEXT NOT NULL,
+  exposure TEXT,
+  timeout INTEGER,
+  default_hidden TEXT NOT NULL,
+  discovery TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_mcp (
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  server_id INTEGER NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+  enabled INTEGER NOT NULL,
+  hidden_tools TEXT,
+  PRIMARY KEY (project_id, server_id)
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

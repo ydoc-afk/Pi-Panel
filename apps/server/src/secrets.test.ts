@@ -19,6 +19,11 @@ describe('Secrets', () => {
     expect(s.encrypt('sk-test-123')).not.toBe(a);
   });
 
+  it('round-trips an empty string', () => {
+    const s = new Secrets(dir);
+    expect(s.decrypt(s.encrypt(''))).toBe('');
+  });
+
   it('creates a 0600 key file once and reuses it across instances', () => {
     const blob = new Secrets(dir).encrypt('hello');
     expect(statSync(join(dir, 'secret.key')).mode & 0o777).toBe(0o600);

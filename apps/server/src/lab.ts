@@ -13,6 +13,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { KINDS, scaffoldFiles, toolNameFor, type Kind } from './lab-templates.js';
 import { SANDBOX_UID, workspaceDir } from './paths.js';
+import { parseSentinelReport } from './sentinel.js';
 import type { ContainerRuntime } from './runtime.js';
 import type { TarEntry } from './tar.js';
 
@@ -58,7 +59,6 @@ const SKIP_DIRS = new Set(['.git', 'node_modules']);
 const MAX_FILES = 2000;
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_BYTES = 2 * 1024 * 1024;
-const MAX_REPORT_BYTES = 512 * 1024;
 const MAX_SCAN_DIRS = 2000;
 const MAX_DEPTH = 4;
 const MAX_PACKAGES = 50;
@@ -120,23 +120,6 @@ function cleanTests(value: unknown): LabTest[] {
       ...(test.expectError === undefined ? {} : { expectError: test.expectError }),
     };
   });
-}
-
-/** The lab report comes from code that ran in the container, so shape it defensively. */
-function parseReport(stdout: string): Record<string, unknown> | null {
-  const end = stdout.lastIndexOf(END);
-  const begin = end < 0 ? -1 : stdout.lastIndexOf(BEGIN, end);
-  if (begin < 0 || end < 0) return null;
-  const body = stdout.slice(begin + BEGIN.length, end).trim();
-  if (body.length > MAX_REPORT_BYTES) return null;
-  try {
-    const parsed = JSON.parse(body) as unknown;
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 export class LabService {
@@ -383,7 +366,7 @@ export class LabService {
       } catch {
         throw new LabError(502, 'Failed to run the lab container. Is the sandbox image built?');
       }
-      const report = result.timedOut ? null : parseReport(result.stdout);
+      const report = result.timedOut ? null : parseSentinelReport(result.stdout, BEGIN, END);
       const status = result.timedOut ? 'timeout' : report ? 'completed' : 'no-report';
       return {
         status,
