@@ -1,4 +1,5 @@
 import type { ServerInput } from './mcp-store.js';
+import { REA_IMAGE } from './rea-build.js';
 
 export interface McpPreset {
   id: string;
@@ -67,7 +68,7 @@ export const MCP_PRESETS: McpPreset[] = [
     server: {
       name: 'rea',
       type: 'managed',
-      image: 'pi-panel/rea:6.8.0',
+      image: REA_IMAGE,
       command: 'rea',
       args: ['mcp', '--http', '--host', '0.0.0.0', '--port', '8765'],
       port: 8765,

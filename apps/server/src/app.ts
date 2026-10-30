@@ -17,6 +17,7 @@ import { SidecarManager, type SidecarOptions } from './sidecars.js';
 import { LabService, registerLab, type LabOptions } from './lab.js';
 import { PackageService, registerPackages, type PackageOptions } from './packages.js';
 import { ProviderStore, registerProviders } from './providers.js';
+import { ReaBuilder, ReaBuildError } from './rea-build.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
 import { SessionManager, registerSessions } from './sessions.js';
@@ -64,6 +65,7 @@ export function buildApp(opts: AppOptions = {}) {
   const sessions = new SessionManager(db, runtime, providers, dataDir, mcpStore, sidecars, samples);
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
+  const rea = new ReaBuilder(runtime);
   const packages = new PackageService(db, runtime, sessions, dataDir, {
     fetch: opts.fetch,
     ...opts.packages,
@@ -99,6 +101,17 @@ export function buildApp(opts: AppOptions = {}) {
     app.get('/api/sandbox', async () => ({
       available: await runtime.hasSandboxImage(),
     }));
+    app.get('/api/rea', () => rea.status());
+    app.post('/api/rea/build', async (req, reply) => {
+      try {
+        rea.start((req.body ?? {}) as { ghidraUrl?: unknown; ghidraSha256?: unknown });
+      } catch (err) {
+        if (err instanceof ReaBuildError)
+          return reply.code(err.status).send({ error: err.message });
+        throw err;
+      }
+      return reply.code(202).send(await rea.status());
+    });
   });
   app.get('/api/health', async () => ({ status: 'ok' }));
 

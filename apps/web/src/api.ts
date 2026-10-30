@@ -167,6 +167,16 @@ export const testGitHub = (token?: string) =>
 
 /** Whether the sandbox image that project containers are created from has been built. */
 export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
+
+export type ReaBuildStatus = 'idle' | 'building' | 'done' | 'failed';
+export interface ReaState {
+  image: string;
+  present: boolean;
+  build: { status: ReaBuildStatus; log: string[]; error?: string; startedAt?: number };
+}
+export const getRea = () => request<ReaState>('/api/rea');
+export const buildRea = (ghidraUrl: string, ghidraSha256: string) =>
+  request<ReaState>('/api/rea/build', send('POST', { ghidraUrl, ghidraSha256 }));
 export const getRepoStatus = (projectId: number) =>
   request<RepoStatus>(`/api/projects/${projectId}/github`);
 export const cloneRepo = (projectId: number, repo: string, branch?: string) =>

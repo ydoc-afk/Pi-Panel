@@ -41,4 +41,32 @@ describe('sandbox image check', () => {
     expect((await get()).json()).toEqual({ available: false });
     await app.close();
   });
+
+  it('keeps the REA build behind login and rejects bad input before building', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'pp-app-'));
+    dirs.push(dataDir);
+    const runtime = new FakeRuntime();
+    const app = buildApp({ db: openDb(':memory:'), runtime, dataDir });
+    expect(
+      (await app.inject({ method: 'POST', url: '/api/rea/build', payload: {} })).statusCode,
+    ).toBe(401);
+
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/auth/setup',
+      payload: { username: 'admin', password: 'correct-horse-battery' },
+    });
+    const headers = {
+      cookie: `pp_session=${setup.cookies.find((c) => c.name === 'pp_session')!.value}`,
+    };
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/rea/build',
+      headers,
+      payload: { ghidraUrl: 'http://example.com/g.zip', ghidraSha256: 'x' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(runtime.builds).toEqual([]);
+    await app.close();
+  });
 });

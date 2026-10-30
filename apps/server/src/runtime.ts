@@ -94,6 +94,18 @@ export interface ContainerRuntime {
   sidecarLogs(id: string, tail: number): Promise<string>;
   /** Whether the sandbox image that project containers are created from is present locally. */
   hasSandboxImage(): Promise<boolean>;
+  /** Whether an image with this tag exists on the Docker host. */
+  imageExists(tag: string): Promise<boolean>;
+  /** Builds an image from a tar build context. Each build log line goes to onLog. Rejects on failure. */
+  buildImage(spec: BuildSpec): Promise<void>;
+}
+
+export interface BuildSpec {
+  tag: string;
+  /** A tar archive whose root holds the Dockerfile. */
+  context: Buffer;
+  buildArgs: Record<string, string>;
+  onLog: (line: string) => void;
 }
 
 /** In-memory runtime for tests and for running the panel without Docker. */
@@ -219,6 +231,28 @@ export class FakeRuntime implements ContainerRuntime {
 
   async hasSandboxImage(): Promise<boolean> {
     return this.sandboxImageAvailable;
+  }
+
+  /** Tags that exist in the fake daemon. Builds add to it. */
+  readonly images = new Set<string>();
+  /** Every build request, in order; tests inspect the build arguments here. */
+  readonly builds: { tag: string; buildArgs: Record<string, string> }[] = [];
+  /** Set to make the next build fail with this message. */
+  buildFailure: string | null = null;
+
+  async imageExists(tag: string): Promise<boolean> {
+    return this.images.has(tag);
+  }
+
+  async buildImage(spec: BuildSpec): Promise<void> {
+    this.builds.push({ tag: spec.tag, buildArgs: spec.buildArgs });
+    spec.onLog('Step 1/1 : FROM fake');
+    if (this.buildFailure) {
+      spec.onLog(this.buildFailure);
+      throw new Error(this.buildFailure);
+    }
+    spec.onLog('Successfully built fake');
+    this.images.add(spec.tag);
   }
 
   async sidecarLogs(id: string, tail: number): Promise<string> {

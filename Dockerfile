@@ -18,6 +18,8 @@ RUN apt-get update \
 RUN npm ci --omit=dev -w @pi-panel/server
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY apps/server/assets apps/server/assets
+# The panel builds the REA image from this Dockerfile (see apps/server/src/rea-build.ts).
+COPY docker/rea docker/rea
 COPY --from=build /app/apps/web/dist apps/web/dist
 EXPOSE 3000
 CMD ["node", "apps/server/dist/index.js"]

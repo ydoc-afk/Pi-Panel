@@ -22,6 +22,7 @@ import {
   type McpServerInput,
 } from './api.js';
 import { McpServerForm } from './McpServerForm.js';
+import { ReaBuilder } from './ReaBuilder.js';
 import { McpToolList } from './McpToolList.js';
 import { Collapsible, ErrorText, mono } from './ui.js';
 
@@ -113,6 +114,8 @@ export function McpServers() {
       await refresh();
     });
 
+  const reaPreset = presets.find((p) => p.id === 'rea');
+
   const presetNotes = (preset: McpServerInput & { name: string }) =>
     presets.find((p) => p.server === preset)?.notes ?? [];
 
@@ -124,6 +127,10 @@ export function McpServers() {
         project container with the agent&apos;s permissions, and any secrets you give them are
         visible to the agent. Remote URL servers keep their own credentials.
       </Text>
+
+      {mode.kind === 'none' && reaPreset && (
+        <ReaBuilder onAdd={() => setMode({ kind: 'form', preset: reaPreset.server })} />
+      )}
 
       {mode.kind === 'none' && (
         <Group gap="xs">
