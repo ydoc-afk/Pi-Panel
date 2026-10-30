@@ -244,9 +244,13 @@ export class FakeRuntime implements ContainerRuntime {
     return this.images.has(tag);
   }
 
+  /** When set, builds wait on this before finishing; tests use it to hold a build open. */
+  buildGate: Promise<void> | null = null;
+
   async buildImage(spec: BuildSpec): Promise<void> {
     this.builds.push({ tag: spec.tag, buildArgs: spec.buildArgs });
     spec.onLog('Step 1/1 : FROM fake');
+    if (this.buildGate) await this.buildGate;
     if (this.buildFailure) {
       spec.onLog(this.buildFailure);
       throw new Error(this.buildFailure);

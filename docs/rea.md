@@ -24,7 +24,9 @@ a test.
 2. Build the image on the Docker host. The easiest route is the **Build REA** card at the top of the MCP
    tab: paste the Ghidra download link and the checksum, then press **Build REA image**. The panel builds
    the image in the background and streams the log. The build downloads Ghidra and a JDK, so it can take
-   a while. When it finishes, the card offers **Add REA**.
+   a while. When it finishes, the card offers **Add REA**. The panel first checks that the link answers,
+   so a wrong link fails at once. If a build fails, the card shows the reason and any hint, and
+   **Download the build log** saves the timestamped log for troubleshooting.
 
    To build it by hand instead:
 
