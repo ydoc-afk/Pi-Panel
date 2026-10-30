@@ -135,6 +135,9 @@ export const listProviders = async () =>
   (await request<{ providers: Provider[] }>('/api/providers')).providers;
 export const createProvider = async (input: ProviderInput) =>
   (await request<{ provider: Provider }>('/api/providers', send('POST', input))).provider;
+/** Lists the models a provider would expose, from the settings in the form. Nothing is saved. */
+export const testProvider = async (input: Omit<ProviderInput, 'name'> & { providerId?: number }) =>
+  (await request<{ models: string[] }>('/api/providers/test', send('POST', input))).models;
 export const updateProvider = async (id: number, input: ProviderInput) =>
   (await request<{ provider: Provider }>(`/api/providers/${id}`, send('PUT', input))).provider;
 export const deleteProvider = (id: number) =>
@@ -158,6 +161,12 @@ export const getGitHub = () => request<GitHubAccount>('/api/github');
 export const connectGitHub = (token: string) =>
   request<GitHubAccount>('/api/github', send('PUT', { token }));
 export const disconnectGitHub = () => request<void>('/api/github', { method: 'DELETE' });
+/** Checks a token against GitHub without storing it. Omit the token to test the stored one. */
+export const testGitHub = (token?: string) =>
+  request<{ login: string; id: number }>('/api/github/test', send('POST', token ? { token } : {}));
+
+/** Whether the sandbox image that project containers are created from has been built. */
+export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
 export const getRepoStatus = (projectId: number) =>
   request<RepoStatus>(`/api/projects/${projectId}/github`);
 export const cloneRepo = (projectId: number, repo: string, branch?: string) =>

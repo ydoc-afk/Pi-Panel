@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Badge, Button, Group, Paper, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Button, Group, Paper, Stack, Text, TextInput, Title } from '@mantine/core';
 import { ProjectView } from './ProjectView.js';
-import { createProject, deleteProject, listProjects, type Project } from './api.js';
+import { createProject, deleteProject, getSandbox, listProjects, type Project } from './api.js';
 import { ErrorText } from './ui.js';
 
 export function Projects() {
@@ -10,6 +10,7 @@ export function Projects() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<Project | null>(null);
+  const [sandboxReady, setSandboxReady] = useState(true);
 
   const refresh = () =>
     listProjects()
@@ -18,6 +19,9 @@ export function Projects() {
 
   useEffect(() => {
     void refresh();
+    getSandbox()
+      .then((s) => setSandboxReady(s.available))
+      .catch(() => setSandboxReady(true));
   }, []);
 
   async function run(action: () => Promise<unknown>) {
@@ -46,6 +50,13 @@ export function Projects() {
   return (
     <Stack>
       <Title order={2}>Projects</Title>
+      {!sandboxReady && (
+        <Alert color="orange" variant="light" title="Sandbox image not built">
+          Project containers are created from the sandbox image, which is not on this machine yet.
+          Build it with <code>docker build -t pi-panel/sandbox-base:latest docker/base</code> from
+          the Pi-Panel source directory, then reload this page.
+        </Alert>
+      )}
       <form onSubmit={add}>
         <Group gap="xs" wrap="nowrap">
           <TextInput

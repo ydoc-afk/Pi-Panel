@@ -185,6 +185,43 @@ describe('providers', () => {
     });
   });
 
+  describe('test connection', () => {
+    const body = { kind: 'openai-compatible', baseUrl: 'http://host.docker.internal:8080/v1' };
+
+    it('lists models from unsaved settings and stores nothing', async () => {
+      fetchMock.mockResolvedValue(json({ data: [{ id: 'm1' }, { id: 'm2' }] }));
+      const res = await t.call('POST', '/api/providers/test', { ...body, apiKey: SECRET });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().models).toEqual(['m1', 'm2']);
+      expect(fetchMock.mock.calls[0]![0]).toBe('http://host.docker.internal:8080/v1/models');
+      expect(fetchMock.mock.calls[0]![1].headers.authorization).toBe(`Bearer ${SECRET}`);
+      expect((await t.call('GET', '/api/providers')).json().providers).toEqual([]);
+    });
+
+    it('falls back to the stored key while editing a blank key field', async () => {
+      const id = (await compat()).json().provider.id;
+      fetchMock.mockResolvedValue(json({ data: [{ id: 'm' }] }));
+      await t.call('POST', '/api/providers/test', { ...body, providerId: id });
+      expect(fetchMock.mock.calls[0]![1].headers.authorization).toBe(`Bearer ${SECRET}`);
+    });
+
+    it('validates the kind and base URL before calling out', async () => {
+      const noUrl = await t.call('POST', '/api/providers/test', { kind: 'openai-compatible' });
+      expect(noUrl.statusCode).toBe(400);
+      const badKind = await t.call('POST', '/api/providers/test', { kind: 'nope', baseUrl: 'x' });
+      expect(badKind.statusCode).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('reports upstream failures without leaking the key', async () => {
+      fetchMock.mockResolvedValueOnce(json({ error: 'nope' }, 401));
+      const res = await t.call('POST', '/api/providers/test', { ...body, apiKey: SECRET });
+      expect(res.statusCode).toBe(502);
+      expect(res.body).toContain('401');
+      expect(res.body).not.toContain(SECRET);
+    });
+  });
+
   describe('sessions using providers', () => {
     const startSession = async (providerId?: number, modelId?: string) => {
       const project = (await t.call('POST', '/api/projects', { name: `p${Math.random()}` })).json()

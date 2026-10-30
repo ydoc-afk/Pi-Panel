@@ -4,6 +4,7 @@ import {
   connectGitHub,
   disconnectGitHub,
   getGitHub,
+  testGitHub,
   type GitHubAccount as Account,
 } from './api.js';
 import { ErrorText } from './ui.js';
@@ -13,12 +14,39 @@ export function GitHubAccount() {
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<
+    { ok: true; login: string } | { ok: false; message: string } | null
+  >(null);
 
   useEffect(() => {
     getGitHub()
       .then(setAccount)
       .catch((e: Error) => setError(e.message));
   }, []);
+
+  // With no token typed, this checks the stored one. Nothing is saved either way.
+  async function test(value?: string) {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const user = await testGitHub(value);
+      setTestResult({ ok: true, login: user.login });
+    } catch (err) {
+      setTestResult({
+        ok: false,
+        message: err instanceof Error ? err.message : 'Token test failed',
+      });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const testLine = testResult && (
+    <Text size="sm" c={testResult.ok ? 'green' : 'red'}>
+      {testResult.ok ? `Token works: it belongs to ${testResult.login}.` : testResult.message}
+    </Text>
+  );
 
   async function connect(e: FormEvent) {
     e.preventDefault();
@@ -57,6 +85,10 @@ export function GitHubAccount() {
           >
             Disconnect
           </Button>
+          <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
+            Test stored token
+          </Button>
+          {testLine}
         </Group>
       ) : (
         <form onSubmit={connect}>
@@ -72,11 +104,20 @@ export function GitHubAccount() {
               value={token}
               onChange={(e) => setToken(e.currentTarget.value)}
             />
-            <Group>
+            <Group gap="xs">
               <Button type="submit" loading={busy} disabled={!token.trim()}>
                 Connect
               </Button>
+              <Button
+                variant="default"
+                loading={testing}
+                disabled={!token.trim()}
+                onClick={() => void test(token.trim())}
+              >
+                Test token
+              </Button>
             </Group>
+            {testLine}
           </Stack>
         </form>
       )}

@@ -274,18 +274,44 @@ export class ProviderStore {
   /** Fetches the provider's model list from its API and stores it. */
   async discover(id: number): Promise<string[]> {
     const row = this.row(id);
-    const key = this.apiKey(id);
+    const models = await this.listModels(row.kind, row.base_url, this.apiKey(id));
+    this.db.prepare('UPDATE providers SET models = ? WHERE id = ?').run(JSON.stringify(models), id);
+    return models;
+  }
+
+  /**
+   * Checks settings before they are saved: the same request as discover, with nothing stored.
+   * While editing, a blank key falls back to the stored one.
+   */
+  async test(input: Input, providerId?: number): Promise<string[]> {
+    const kind = input.kind as ProviderKind;
+    if (!KINDS.includes(kind))
+      throw new ProviderError(400, `kind must be one of ${KINDS.join(', ')}`);
+    const baseUrl = cleanBaseUrl(input.baseUrl);
+    if (kind === 'openai-compatible' && !baseUrl) {
+      throw new ProviderError(400, 'baseUrl is required for OpenAI-compatible providers');
+    }
+    const key =
+      this.cleanKey(input.apiKey) ?? (providerId === undefined ? null : this.apiKey(providerId));
+    return this.listModels(kind, baseUrl, key);
+  }
+
+  private async listModels(
+    kind: ProviderKind,
+    baseUrl: string | null,
+    key: string | null,
+  ): Promise<string[]> {
     let url: string;
     const headers: Record<string, string> = { accept: 'application/json' };
-    if (row.kind === 'anthropic') {
+    if (kind === 'anthropic') {
       if (!key) throw new ProviderError(400, 'An API key is required to list Anthropic models');
-      url = `${row.base_url ?? DEFAULT_BASE.anthropic}/v1/models?limit=1000`;
+      url = `${baseUrl ?? DEFAULT_BASE.anthropic}/v1/models?limit=1000`;
       headers['x-api-key'] = key;
       headers['anthropic-version'] = '2023-06-01';
     } else {
-      if (row.kind === 'openai' && !key)
+      if (kind === 'openai' && !key)
         throw new ProviderError(400, 'An API key is required to list OpenAI models');
-      url = `${row.base_url ?? DEFAULT_BASE.openai}/models`;
+      url = `${baseUrl ?? DEFAULT_BASE.openai}/models`;
       if (key) headers.authorization = `Bearer ${key}`;
     }
     let body: unknown;
@@ -315,9 +341,7 @@ export class ProviderStore {
             (m as { model?: unknown })?.model),
       )
       .filter((m): m is string => typeof m === 'string' && m.length > 0 && m.length <= 200);
-    const models = [...new Set(ids)];
-    this.db.prepare('UPDATE providers SET models = ? WHERE id = ?').run(JSON.stringify(models), id);
-    return models;
+    return [...new Set(ids)];
   }
 }
 
@@ -349,6 +373,14 @@ export function registerProviders(app: FastifyInstance, store: ProviderStore) {
     handle(reply, () => {
       store.delete(id(req.params.id));
       return reply.code(204).send();
+    }),
+  );
+
+  // Checks a provider's settings before saving. Nothing is stored.
+  app.post<{ Body: Input & { providerId?: number } }>('/api/providers/test', (req, reply) =>
+    handle(reply, async () => {
+      const { providerId, ...input } = req.body ?? {};
+      return { models: await store.test(input, providerId) };
     }),
   );
 

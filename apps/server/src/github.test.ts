@@ -140,6 +140,30 @@ describe('github', () => {
       expect((await t.call('PUT', '/api/github', { token: 'has space' })).statusCode).toBe(400);
     });
 
+    it('tests a pasted token without storing it', async () => {
+      const res = await t.call('POST', '/api/github/test', { token: TOKEN });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ login: 'octocat', id: 583231 });
+      expect(res.body).not.toContain(TOKEN);
+      expect((await t.call('GET', '/api/github')).json()).toEqual({ connected: false });
+    });
+
+    it('tests the stored token when the field is blank', async () => {
+      await connect();
+      t.api.mockClear();
+      expect((await t.call('POST', '/api/github/test', {})).json().login).toBe('octocat');
+      expect(t.api.mock.calls[0]![1]!.headers).toMatchObject({ authorization: `Bearer ${TOKEN}` });
+    });
+
+    it('explains when there is nothing to test, and when GitHub rejects the token', async () => {
+      const none = await t.call('POST', '/api/github/test', { token: '' });
+      expect(none.statusCode).toBe(400);
+      t.api.mockResolvedValueOnce(json({ message: 'Bad credentials' }, 401));
+      const bad = await t.call('POST', '/api/github/test', { token: TOKEN });
+      expect(bad.statusCode).toBe(502);
+      expect(bad.body).not.toContain(TOKEN);
+    });
+
     it('disconnects', async () => {
       await connect();
       expect((await t.call('DELETE', '/api/github')).statusCode).toBe(204);

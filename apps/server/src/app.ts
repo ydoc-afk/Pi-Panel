@@ -95,6 +95,10 @@ export function buildApp(opts: AppOptions = {}) {
     registerMcp(app, mcp);
     registerSamples(app, samples);
     registerSessions(app, sessions);
+    // Lets the UI warn before a project is created when the sandbox image has not been built.
+    app.get('/api/sandbox', async () => ({
+      available: await runtime.hasSandboxImage(),
+    }));
   });
   app.get('/api/health', async () => ({ status: 'ok' }));
 

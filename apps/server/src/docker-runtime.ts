@@ -287,4 +287,14 @@ export class DockerRuntime implements ContainerRuntime {
     const { stdout, stderr } = demuxDockerLogs(Buffer.from(logs));
     return `${stdout}${stderr}`;
   }
+
+  async hasSandboxImage(): Promise<boolean> {
+    try {
+      await this.docker.getImage(this.image).inspect();
+      return true;
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return false;
+      throw err;
+    }
+  }
 }
