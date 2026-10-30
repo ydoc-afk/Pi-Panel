@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Group, PasswordInput, Stack, Text, Title } from '@mantine/core';
+import { Button, Group, PasswordInput, Stack, Text } from '@mantine/core';
 import {
   connectGitHub,
   disconnectGitHub,
@@ -7,7 +7,7 @@ import {
   testGitHub,
   type GitHubAccount as Account,
 } from './api.js';
-import { ErrorText } from './ui.js';
+import { ErrorText, PageHeader, Tip } from './ui.js';
 
 export function GitHubAccount() {
   const [account, setAccount] = useState<Account | null>(null);
@@ -64,7 +64,10 @@ export function GitHubAccount() {
 
   return (
     <Stack>
-      <Title order={2}>GitHub</Title>
+      <PageHeader
+        title="GitHub"
+        description="One account for cloning, pushing and opening pull requests from projects. The token is stored encrypted."
+      />
       {account?.connected ? (
         <Group gap="sm">
           <Text>
@@ -85,9 +88,11 @@ export function GitHubAccount() {
           >
             Disconnect
           </Button>
-          <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
-            Test stored token
-          </Button>
+          <Tip label="Asks GitHub whether the stored token still works">
+            <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
+              Test stored token
+            </Button>
+          </Tip>
           {testLine}
         </Group>
       ) : (

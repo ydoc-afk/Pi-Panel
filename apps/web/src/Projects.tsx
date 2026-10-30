@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Group, Paper, Stack, Text, TextInput, Title } from '@mantine/core';
+import { Alert, Badge, Button, Group, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { ProjectView } from './ProjectView.js';
 import { createProject, deleteProject, getSandbox, listProjects, type Project } from './api.js';
-import { ErrorText } from './ui.js';
+import { ErrorText, PageHeader, Tip } from './ui.js';
 
 export function Projects() {
   const [projects, setProjects] = useState<Project[]>([]);
@@ -49,7 +49,10 @@ export function Projects() {
 
   return (
     <Stack>
-      <Title order={2}>Projects</Title>
+      <PageHeader
+        title="Projects"
+        description="Each project is its own sandboxed container with a workspace. Open one to start an agent session."
+      />
       {!sandboxReady && (
         <Alert color="orange" variant="light" title="Sandbox image not built">
           Project containers are created from the sandbox image, which is not on this machine yet.
@@ -65,9 +68,11 @@ export function Projects() {
             onChange={(e) => setName(e.currentTarget.value)}
             style={{ flex: 1 }}
           />
-          <Button type="submit" disabled={busy || !name.trim()}>
-            Create
-          </Button>
+          <Tip label="Creates a sandbox container for this project">
+            <Button type="submit" disabled={busy || !name.trim()}>
+              Create
+            </Button>
+          </Tip>
         </Group>
       </form>
       <ErrorText error={error} />
@@ -79,25 +84,29 @@ export function Projects() {
             <Paper key={p.id} withBorder p="sm" radius="md">
               <Group justify="space-between" wrap="nowrap">
                 <Group gap="sm" wrap="nowrap">
-                  <Button variant="subtle" onClick={() => setOpen(p)}>
-                    {p.name}
-                  </Button>
+                  <Tip label="Open this project">
+                    <Button variant="subtle" onClick={() => setOpen(p)}>
+                      {p.name}
+                    </Button>
+                  </Tip>
                   <Badge variant="light" color="gray">
                     {p.status}
                   </Badge>
                 </Group>
-                <Button
-                  variant="subtle"
-                  color="red"
-                  size="xs"
-                  disabled={busy}
-                  onClick={() => {
-                    if (confirm(`Delete "${p.name}" and its workspace?`))
-                      void run(() => deleteProject(p.id));
-                  }}
-                >
-                  Delete
-                </Button>
+                <Tip label="Removes the container and its workspace files">
+                  <Button
+                    variant="subtle"
+                    color="red"
+                    size="xs"
+                    disabled={busy}
+                    onClick={() => {
+                      if (confirm(`Delete "${p.name}" and its workspace?`))
+                        void run(() => deleteProject(p.id));
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </Tip>
               </Group>
             </Paper>
           ))}

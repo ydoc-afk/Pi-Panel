@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Anchor, Badge, Button, Group, Paper, Stack, Text, TextInput } from '@mantine/core';
 import type { McpServerInput } from './api.js';
 import { searchRegistry, type RegistryItem } from './api.js';
-import { ErrorText } from './ui.js';
+import { ErrorText, Tip } from './ui.js';
 
 /** A server name the panel accepts: letters, digits, dashes and underscores. */
 export const serverName = (registryName: string) =>
@@ -83,9 +83,17 @@ function Entry({ item, onAdd }: { item: RegistryItem; onAdd: () => void }) {
             </Anchor>
           )}
         </Stack>
-        <Button size="xs" disabled={!install} onClick={onAdd}>
-          Add
-        </Button>
+        <Tip
+          label={
+            install
+              ? 'Opens the form filled in so you can review it before saving'
+              : 'This package type cannot run here yet'
+          }
+        >
+          <Button size="xs" disabled={!install} onClick={onAdd}>
+            Add
+          </Button>
+        </Tip>
       </Group>
     </Paper>
   );
