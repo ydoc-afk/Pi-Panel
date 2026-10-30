@@ -24,7 +24,13 @@ const toDto = (r: ProjectRow) => ({
 
 export function registerProjects(
   app: FastifyInstance,
-  deps: { db: DatabaseSync; runtime: ContainerRuntime; dataDir: string },
+  deps: {
+    db: DatabaseSync;
+    runtime: ContainerRuntime;
+    dataDir: string;
+    /** Called before a project's container is removed, e.g. to stop its running sessions. */
+    beforeRemove?: (projectId: number) => void;
+  },
 ) {
   const { db, runtime } = deps;
   const workspaceFor = (id: number) => resolve(deps.dataDir, 'workspaces', String(id));
@@ -84,6 +90,7 @@ export function registerProjects(
     const id = Number(req.params.id);
     const row = find(id);
     if (!row) return reply.code(404).send({ error: 'Project not found' });
+    deps.beforeRemove?.(id);
     try {
       if (row.container_id) await runtime.remove(row.container_id);
     } catch (err) {

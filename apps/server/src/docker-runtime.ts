@@ -1,5 +1,6 @@
 import Docker from 'dockerode';
-import type { ContainerRuntime, ContainerSpec } from './runtime.js';
+import { PassThrough } from 'node:stream';
+import type { ContainerRuntime, ContainerSpec, ExecSpec, RunningProcess } from './runtime.js';
 
 const DEFAULT_IMAGE = 'pi-panel/sandbox-base:latest';
 
@@ -42,5 +43,43 @@ export class DockerRuntime implements ContainerRuntime {
       if ((err as { statusCode?: number }).statusCode === 404) return;
       throw err;
     }
+  }
+
+  async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
+    const exec = await this.docker.getContainer(containerId).exec({
+      Cmd: spec.cmd,
+      WorkingDir: spec.workdir,
+      Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: false,
+    });
+    const stream = await exec.start({ hijack: true, stdin: true });
+    const out = new PassThrough();
+    const err = new PassThrough();
+    this.docker.modem.demuxStream(stream, out, err);
+    const exitCbs: ((code: number | null) => void)[] = [];
+    let exited = false;
+    stream.on('close', () => {
+      if (exited) return;
+      exited = true;
+      exec
+        .inspect()
+        .then((info) => info.ExitCode ?? null)
+        .catch(() => null)
+        .then((code) => exitCbs.forEach((cb) => cb(code)));
+    });
+    return {
+      write: (data) => void stream.write(data),
+      onStdout: (cb) => void out.on('data', cb),
+      onStderr: (cb) => void err.on('data', cb),
+      onExit: (cb) => void exitCbs.push(cb),
+      // Closing stdin makes `pi --mode rpc` exit; destroying the stream drops the attachment.
+      kill: () => {
+        stream.end();
+        stream.destroy();
+      },
+    };
   }
 }

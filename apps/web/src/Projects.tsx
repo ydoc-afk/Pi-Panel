@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { ProjectView } from './ProjectView.js';
 import { createProject, deleteProject, listProjects, type Project } from './api.js';
 
 export function Projects() {
@@ -6,6 +7,7 @@ export function Projects() {
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState<Project | null>(null);
 
   const refresh = () =>
     listProjects()
@@ -37,6 +39,8 @@ export function Projects() {
     });
   }
 
+  if (open) return <ProjectView project={open} onBack={() => setOpen(null)} />;
+
   return (
     <section>
       <h2>Projects</h2>
@@ -59,7 +63,7 @@ export function Projects() {
         <ul style={{ paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
           {projects.map((p) => (
             <li key={p.id} style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <strong>{p.name}</strong>
+              <button onClick={() => setOpen(p)}>{p.name}</button>
               <span>{p.status}</span>
               <button
                 disabled={busy}

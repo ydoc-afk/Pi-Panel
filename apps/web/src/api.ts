@@ -54,3 +54,45 @@ export const createProject = async (name: string) =>
   ).project;
 export const deleteProject = (id: number) =>
   request<void>(`/api/projects/${id}`, { method: 'DELETE' });
+
+export interface Session {
+  id: number;
+  projectId: number;
+  name: string;
+  status: 'idle' | 'running' | 'error';
+  createdAt: number;
+}
+
+export interface StreamMessage {
+  seq: number;
+  event: { type: string } & Record<string, unknown>;
+}
+
+const json = (body: unknown): RequestInit => ({
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+export const listSessions = async (projectId: number) =>
+  (await request<{ sessions: Session[] }>(`/api/projects/${projectId}/sessions`)).sessions;
+export const createSession = async (projectId: number) =>
+  (await request<{ session: Session }>(`/api/projects/${projectId}/sessions`, json({}))).session;
+export const deleteSession = (id: number) =>
+  request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
+export const getSession = async (id: number) =>
+  (await request<{ session: Session }>(`/api/sessions/${id}`)).session;
+export const sendPrompt = (id: number, message: string, streamingBehavior?: 'steer') =>
+  request<{ disposition?: string }>(
+    `/api/sessions/${id}/prompt`,
+    json({ message, streamingBehavior }),
+  );
+export const abortSession = (id: number) =>
+  request<{ ok: true }>(`/api/sessions/${id}/abort`, json({}));
+export const fetchEvents = async (id: number, after: number) =>
+  (await request<{ events: StreamMessage[] }>(`/api/sessions/${id}/events?after=${after}`)).events;
+
+export function openStream(id: number, after: number): WebSocket {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  return new WebSocket(`${proto}://${location.host}/api/sessions/${id}/stream?after=${after}`);
+}
