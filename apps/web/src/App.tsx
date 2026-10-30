@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AuthForm } from './AuthForm.js';
+import { Projects } from './Projects.js';
 import { getStatus, logout, type AuthStatus, type User } from './api.js';
 
 export function App() {
@@ -26,6 +27,7 @@ export function App() {
           >
             Sign out
           </button>
+          <Projects />
         </>
       ) : (
         <AuthForm setup={status.setupRequired} onAuthed={authed} />

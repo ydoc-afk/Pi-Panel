@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
 import { openDb } from './db.js';
+import { FakeRuntime } from './runtime.js';
 
 const PASSWORD = 'correct-horse-battery';
 
 function setup() {
-  const app = buildApp({ db: openDb(':memory:') });
+  const app = buildApp({ db: openDb(':memory:'), runtime: new FakeRuntime() });
   const post = async (url: string, payload: Record<string, unknown>, cookie?: string) =>
     await app.inject({ method: 'POST', url, payload, headers: cookie ? { cookie } : {} });
   return { app, post };

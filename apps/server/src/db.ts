@@ -14,6 +14,13 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  container_id TEXT,
+  status TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 export function openDb(path: string): DatabaseSync {
