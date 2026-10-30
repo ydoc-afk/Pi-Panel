@@ -11,6 +11,9 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 - **Real-pi tests** (`lab-real-pi.test.ts`, `mcp-real-pi.test.ts`) check the parts of pi we depend on
   that a fake cannot: the SDK harness, `pi mcp list --json`, and the generated `mcp.json`.
 - **Presets pin versions**, and package installs and reviews are pinned to an exact version.
+- **Managed containers are pinned by image tag** (`pi-panel/rea:6.8.0`); REA's version is a build arg
+  of `docker/rea`. Pi-Panel never pulls images, so updating one is a deliberate rebuild plus a new
+  tag, then a restart from the project's MCP section.
 - The sandbox base image is Node 24: current reference MCP servers require it, pi needs 22.19+, and
   REA needs 22.23.4+.
 

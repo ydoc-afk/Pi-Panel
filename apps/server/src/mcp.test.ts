@@ -224,12 +224,14 @@ describe('mcp', () => {
       );
       for (const p of presets) {
         expect((await create({ ...p.server, name: `${p.id}-copy` })).statusCode, p.id).toBe(201);
-        const pkg = (p.server.args as string[]).find((a) =>
-          !a.startsWith('-') && a !== p.server.command && a.includes('/') === false
-            ? a.includes('@')
-            : a.startsWith('@'),
-        );
-        expect(pkg, `${p.id} should pin a version`).toMatch(/@\d+\.\d+\.\d+$/);
+        if (p.server.type === 'managed') {
+          expect(p.server.image, `${p.id} should pin an image tag`).toMatch(/:\d+\.\d+\.\d+$/);
+        } else {
+          const pkg = (p.server.args as string[]).find(
+            (a) => /^@?[a-z][\w./-]*(@[\w.-]+)?$/.test(a) && a !== '-y',
+          );
+          expect(pkg, `${p.id} should pin a version`).toMatch(/@\d+\.\d+\.\d+$/);
+        }
       }
     });
   });

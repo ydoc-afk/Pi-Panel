@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
   exposure TEXT,
   timeout INTEGER,
   default_hidden TEXT NOT NULL,
+  image TEXT,
+  port INTEGER,
+  ready_log TEXT,
+  mount_samples INTEGER NOT NULL DEFAULT 0,
+  memory_mb INTEGER,
   discovery TEXT,
   created_at INTEGER NOT NULL
 );
@@ -62,6 +67,7 @@ CREATE TABLE IF NOT EXISTS project_mcp (
   server_id INTEGER NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
   enabled INTEGER NOT NULL,
   hidden_tools TEXT,
+  container_id TEXT,
   PRIMARY KEY (project_id, server_id)
 );
 CREATE TABLE IF NOT EXISTS sessions (
@@ -87,6 +93,14 @@ export function openDb(path: string): DatabaseSync {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
   addMissingColumns(db, 'projects', { repo: 'TEXT' });
+  addMissingColumns(db, 'mcp_servers', {
+    image: 'TEXT',
+    port: 'INTEGER',
+    ready_log: 'TEXT',
+    mount_samples: 'INTEGER NOT NULL DEFAULT 0',
+    memory_mb: 'INTEGER',
+  });
+  addMissingColumns(db, 'project_mcp', { container_id: 'TEXT' });
   addMissingColumns(db, 'sessions', {
     provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
     model_id: 'TEXT',

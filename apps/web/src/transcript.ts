@@ -65,6 +65,11 @@ export function applyMessage(t: Transcript, m: StreamMessage): Transcript {
           { kind: 'tool', text: `${e.isError ? 'Failed' : 'Finished'} ${String(e.toolName)}` },
         ],
       };
+    case 'panel_notice':
+      return {
+        ...next,
+        items: [...t.items, { kind: 'notice', text: String(e.message ?? 'Notice from the panel') }],
+      };
     case 'panel_process_exit':
       return {
         ...next,

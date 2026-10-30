@@ -17,12 +17,22 @@ interface Row {
   stored: boolean;
 }
 
+type Kind = 'stdio' | 'http' | 'managed';
+
 const rowsFrom = (entries: McpEntry[] | undefined): Row[] =>
   (entries ?? []).map((e) => ({
     key: e.key,
     value: e.value ?? '',
     secret: e.secret,
     stored: e.secret && e.hasValue,
+  }));
+
+const rowsFromInput = (entries: McpEntryInput[] | undefined): Row[] =>
+  (entries ?? []).map((e) => ({
+    key: e.key,
+    value: e.value ?? '',
+    secret: e.secret,
+    stored: false,
   }));
 
 const toInputs = (rows: Row[]): McpEntryInput[] =>
@@ -103,33 +113,24 @@ export function McpServerForm({
 }) {
   const base = initial ?? preset;
   const [name, setName] = useState(base?.name ?? '');
-  const [type, setType] = useState<'stdio' | 'http'>(initial?.type ?? preset?.type ?? 'stdio');
+  const [type, setType] = useState<Kind>(initial?.type ?? preset?.type ?? 'stdio');
   const [description, setDescription] = useState(base?.description ?? '');
   const [command, setCommand] = useState(base?.command ?? '');
   const [args, setArgs] = useState((base?.args ?? []).join('\n'));
   const [cwd, setCwd] = useState(base?.cwd ?? '');
   const [url, setUrl] = useState(base?.url ?? '');
+  const [image, setImage] = useState(base?.image ?? '');
+  const [port, setPort] = useState(base?.port ? String(base.port) : '8765');
+  const [readyLog, setReadyLog] = useState(base?.readyLog ?? '');
+  const [mountSamples, setMountSamples] = useState(base?.mountSamples ?? false);
+  const [memoryMb, setMemoryMb] = useState(base?.memoryMb ? String(base.memoryMb) : '4096');
   const [exposure, setExposure] = useState<McpExposure | ''>(base?.exposure ?? '');
   const [timeout, setTimeoutSecs] = useState(base?.timeout ? String(base.timeout) : '');
   const [env, setEnv] = useState<Row[]>(
-    initial
-      ? rowsFrom(initial.env)
-      : (preset?.env ?? []).map((e) => ({
-          key: e.key,
-          value: e.value ?? '',
-          secret: e.secret,
-          stored: false,
-        })),
+    initial ? rowsFrom(initial.env) : rowsFromInput(preset?.env),
   );
   const [headers, setHeaders] = useState<Row[]>(
-    initial
-      ? rowsFrom(initial.headers)
-      : (preset?.headers ?? []).map((e) => ({
-          key: e.key,
-          value: e.value ?? '',
-          secret: e.secret,
-          stored: false,
-        })),
+    initial ? rowsFrom(initial.headers) : rowsFromInput(preset?.headers),
   );
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -138,13 +139,25 @@ export function McpServerForm({
     e.preventDefault();
     setBusy(true);
     setError('');
+    const lines = args.split('\n').filter((a) => a !== '');
     const input: McpServerInput = {
       description,
       exposure: exposure || null,
       timeout: timeout ? Number(timeout) : null,
-      ...(type === 'stdio'
-        ? { command, args: args.split('\n').filter((a) => a !== ''), cwd, env: toInputs(env) }
-        : { url, headers: toInputs(headers) }),
+      ...(type === 'managed'
+        ? {
+            image,
+            command,
+            args: lines,
+            port: Number(port),
+            readyLog,
+            mountSamples,
+            memoryMb: Number(memoryMb),
+            env: toInputs(env),
+          }
+        : type === 'stdio'
+          ? { command, args: lines, cwd, env: toInputs(env) }
+          : { url, headers: toInputs(headers) }),
     };
     try {
       if (initial) await updateMcpServer(initial.id, input);
@@ -170,10 +183,11 @@ export function McpServerForm({
           aria-label="Server type"
           value={type}
           disabled={!!initial}
-          onChange={(e) => setType(e.target.value as 'stdio' | 'http')}
+          onChange={(e) => setType(e.target.value as Kind)}
         >
           <option value="stdio">Command (runs in the project container)</option>
           <option value="http">URL (streamable HTTP)</option>
+          <option value="managed">Managed container (isolated, HTTP)</option>
         </select>
       </div>
       <input
@@ -181,10 +195,26 @@ export function McpServerForm({
         value={description}
         onChange={(e) => setDescription(e.target.value)}
       />
-      {type === 'stdio' ? (
+      {type === 'managed' && (
+        <>
+          <p style={{ margin: 0, fontSize: 13 }}>
+            Runs in its own container on a private network with no internet. The agent can call its
+            tools but never sees its environment variables or files. The server must speak
+            streamable HTTP at <code>/mcp</code>, and the image must already exist on this machine.
+          </p>
+          <input
+            placeholder="Image, e.g. pi-panel/rea:6.8.0"
+            value={image}
+            onChange={(e) => setImage(e.target.value)}
+          />
+        </>
+      )}
+      {type === 'stdio' || type === 'managed' ? (
         <>
           <input
-            placeholder="Command, e.g. npx"
+            placeholder={
+              type === 'managed' ? 'Command inside the container, e.g. rea' : 'Command, e.g. npx'
+            }
             value={command}
             onChange={(e) => setCommand(e.target.value)}
           />
@@ -195,12 +225,61 @@ export function McpServerForm({
             onChange={(e) => setArgs(e.target.value)}
             style={{ fontFamily: 'ui-monospace, monospace' }}
           />
-          <input
-            placeholder="Working directory (optional)"
-            value={cwd}
-            onChange={(e) => setCwd(e.target.value)}
+          {type === 'stdio' && (
+            <input
+              placeholder="Working directory (optional)"
+              value={cwd}
+              onChange={(e) => setCwd(e.target.value)}
+            />
+          )}
+          {type === 'managed' && (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <label>
+                Port{' '}
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  style={{ width: 80 }}
+                  value={port}
+                  onChange={(e) => setPort(e.target.value)}
+                />
+              </label>
+              <label>
+                Memory (MB){' '}
+                <input
+                  type="number"
+                  min={256}
+                  max={32768}
+                  style={{ width: 90 }}
+                  value={memoryMb}
+                  onChange={(e) => setMemoryMb(e.target.value)}
+                />
+              </label>
+              <label>
+                Ready when logs contain{' '}
+                <input
+                  value={readyLog}
+                  placeholder="MCP transport listening"
+                  onChange={(e) => setReadyLog(e.target.value)}
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={mountSamples}
+                  onChange={(e) => setMountSamples(e.target.checked)}
+                />{' '}
+                mount uploaded files at /samples (read-only)
+              </label>
+            </div>
+          )}
+          <Rows
+            label={type === 'managed' ? 'Container environment (never sent to pi)' : 'Environment'}
+            rows={env}
+            onChange={setEnv}
+            keyPlaceholder="NAME"
           />
-          <Rows label="Environment" rows={env} onChange={setEnv} keyPlaceholder="NAME" />
         </>
       ) : (
         <>

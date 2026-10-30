@@ -338,7 +338,7 @@ export interface McpServer {
   id: number;
   name: string;
   description: string | null;
-  type: 'stdio' | 'http';
+  type: 'stdio' | 'http' | 'managed';
   command: string | null;
   args: string[];
   cwd: string | null;
@@ -348,6 +348,12 @@ export interface McpServer {
   exposure: McpExposure | null;
   timeout: number | null;
   defaultHidden: string[];
+  /** Managed servers only. */
+  image: string | null;
+  port: number | null;
+  readyLog: string | null;
+  mountSamples: boolean;
+  memoryMb: number | null;
   discovery: McpDiscovery | null;
   createdAt: number;
 }
@@ -360,7 +366,7 @@ export interface McpEntryInput {
 
 export interface McpServerInput {
   name?: string;
-  type?: 'stdio' | 'http';
+  type?: 'stdio' | 'http' | 'managed';
   description?: string;
   command?: string;
   args?: string[];
@@ -370,6 +376,11 @@ export interface McpServerInput {
   headers?: McpEntryInput[];
   exposure?: McpExposure | null;
   timeout?: number | null;
+  image?: string;
+  port?: number;
+  readyLog?: string;
+  mountSamples?: boolean;
+  memoryMb?: number;
 }
 
 export interface McpPreset {
@@ -415,14 +426,66 @@ export const importMcp = (json: unknown, name?: string) =>
     '/api/mcp/import',
     send('POST', { json, ...(name ? { name } : {}) }),
   );
-export const listProjectMcp = async (projectId: number) =>
-  (await request<{ servers: McpProjectServer[] }>(`/api/projects/${projectId}/mcp`)).servers;
+export interface SidecarStatus {
+  state: 'stopped' | 'running' | 'exited' | 'missing';
+  exitCode: number | null;
+}
+
+export interface McpProjectState {
+  servers: McpProjectServer[];
+  /** Container state for each managed server, by server id. */
+  sidecars: Record<number, SidecarStatus>;
+}
+
+export const listProjectMcp = (projectId: number) =>
+  request<McpProjectState>(`/api/projects/${projectId}/mcp`);
 export const setProjectMcp = (
   projectId: number,
   serverId: number,
   change: { enabled?: boolean; hiddenTools?: string[] | null },
 ) =>
-  request<{ servers: McpProjectServer[] } & McpApplied>(
+  request<McpProjectState & McpApplied & { sidecarError?: string }>(
     `/api/projects/${projectId}/mcp/${serverId}`,
     send('PUT', change),
   );
+
+export const sidecarAction = async (
+  projectId: number,
+  serverId: number,
+  action: 'start' | 'stop' | 'restart',
+) =>
+  (
+    await request<{ sidecar: SidecarStatus }>(
+      `/api/projects/${projectId}/mcp/${serverId}/sidecar`,
+      send('POST', { action }),
+    )
+  ).sidecar;
+export const sidecarLogs = async (projectId: number, serverId: number) =>
+  (
+    await request<{ logs: string }>(
+      `/api/projects/${projectId}/mcp/${serverId}/sidecar/logs?tail=100`,
+    )
+  ).logs;
+
+export interface SampleFile {
+  name: string;
+  size: number;
+  modifiedAt: number;
+}
+
+export const listSamples = async (projectId: number) =>
+  (await request<{ files: SampleFile[] }>(`/api/projects/${projectId}/samples`)).files;
+export const uploadSample = async (projectId: number, file: File) => {
+  const form = new FormData();
+  form.append('file', file);
+  return (
+    await request<{ file: SampleFile }>(`/api/projects/${projectId}/samples`, {
+      method: 'POST',
+      body: form,
+    })
+  ).file;
+};
+export const deleteSample = (projectId: number, name: string) =>
+  request<void>(`/api/projects/${projectId}/samples/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  });

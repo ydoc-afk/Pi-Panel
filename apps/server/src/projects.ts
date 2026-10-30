@@ -30,7 +30,9 @@ export function registerProjects(
     runtime: ContainerRuntime;
     dataDir: string;
     /** Called before a project's container is removed, e.g. to stop its running sessions. */
-    beforeRemove?: (projectId: number) => void;
+    beforeRemove?: (projectId: number) => void | Promise<void>;
+    /** Called after the project container is gone, e.g. to remove its private network. */
+    afterRemove?: (projectId: number) => void | Promise<void>;
   },
 ) {
   const { db, runtime } = deps;
@@ -99,7 +101,7 @@ export function registerProjects(
     const id = Number(req.params.id);
     const row = find(id);
     if (!row) return reply.code(404).send({ error: 'Project not found' });
-    deps.beforeRemove?.(id);
+    await deps.beforeRemove?.(id);
     try {
       if (row.container_id) await runtime.remove(row.container_id);
     } catch (err) {
@@ -107,6 +109,7 @@ export function registerProjects(
       req.log.error({ err }, 'container removal failed');
       return reply.code(502).send({ error: 'Failed to remove project container' });
     }
+    await deps.afterRemove?.(id);
     await rm(workspaceFor(id), { recursive: true, force: true });
     await rm(agentFor(id), { recursive: true, force: true });
     db.prepare('DELETE FROM projects WHERE id = ?').run(id);

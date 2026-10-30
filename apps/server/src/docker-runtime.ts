@@ -10,6 +10,8 @@ import type {
   ExecResult,
   ExecSpec,
   RunningProcess,
+  SidecarSpec,
+  SidecarState,
 } from './runtime.js';
 
 const DEFAULT_IMAGE = 'pi-panel/sandbox-base:latest';
@@ -142,15 +144,18 @@ export class DockerRuntime implements ContainerRuntime {
       WorkingDir: '/lab',
       User: '1000:1000',
       Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
-      NetworkDisabled: spec.networkDisabled,
+      NetworkDisabled: spec.network ? false : spec.networkDisabled,
       Labels: { 'pi-panel.ephemeral': '1' },
       HostConfig: {
         Memory: 1024 * 1024 * 1024,
         MemorySwap: 1024 * 1024 * 1024,
         NanoCpus: 1_000_000_000,
         PidsLimit: 256,
+        ...(spec.network ? { NetworkMode: spec.network } : {}),
         // Servers that run on the Docker host (Ghidra, llama.cpp) are reached by this name.
-        ...(spec.networkDisabled ? {} : { ExtraHosts: ['host.docker.internal:host-gateway'] }),
+        ...(spec.networkDisabled || spec.network
+          ? {}
+          : { ExtraHosts: ['host.docker.internal:host-gateway'] }),
         CapDrop: ['ALL'],
         SecurityOpt: ['no-new-privileges'],
       },
@@ -178,5 +183,108 @@ export class DockerRuntime implements ContainerRuntime {
     } finally {
       await container.remove({ force: true }).catch(() => undefined);
     }
+  }
+
+  async ensureNetwork(name: string, opts: { internal: boolean }): Promise<void> {
+    try {
+      await this.docker.getNetwork(name).inspect();
+      return;
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode !== 404) throw err;
+    }
+    await this.docker.createNetwork({
+      Name: name,
+      Driver: 'bridge',
+      Internal: opts.internal,
+      Labels: { 'pi-panel': '1' },
+    });
+  }
+
+  async removeNetwork(name: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(name).remove();
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return;
+      throw err;
+    }
+  }
+
+  async connectNetwork(containerId: string, network: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(network).connect({ Container: containerId });
+    } catch (err) {
+      // Docker answers 403 "endpoint ... already exists" when the container is already attached.
+      const e = err as { statusCode?: number; message?: string };
+      if (e.statusCode === 403 && /already exists/i.test(e.message ?? '')) return;
+      throw err;
+    }
+  }
+
+  async startSidecar(spec: SidecarSpec): Promise<string> {
+    await this.docker
+      .getContainer(spec.name)
+      .remove({ force: true })
+      .catch((err: { statusCode?: number }) => {
+        if (err.statusCode !== 404) throw err;
+      });
+    const container = await this.docker.createContainer({
+      name: spec.name,
+      Image: spec.image,
+      Cmd: spec.cmd,
+      User: '1000:1000',
+      Env: Object.entries(spec.env).map(([k, v]) => `${k}=${v}`),
+      Labels: spec.labels,
+      HostConfig: {
+        NetworkMode: spec.network,
+        Binds: spec.mounts.map(
+          (m) => `${this.hostPath(m.source)}:${m.target}${m.readOnly ? ':ro' : ''}`,
+        ),
+        Memory: spec.memoryMb * 1024 * 1024,
+        MemorySwap: spec.memoryMb * 1024 * 1024,
+        NanoCpus: 2_000_000_000,
+        PidsLimit: 1024,
+        CapDrop: ['ALL'],
+        SecurityOpt: ['no-new-privileges'],
+        RestartPolicy: { Name: 'unless-stopped' },
+      },
+      NetworkingConfig: { EndpointsConfig: { [spec.network]: { Aliases: [spec.alias] } } },
+    });
+    try {
+      await container.start();
+    } catch (err) {
+      await container.remove({ force: true }).catch(() => undefined);
+      throw err;
+    }
+    return container.id;
+  }
+
+  async removeSidecar(id: string): Promise<void> {
+    try {
+      await this.docker.getContainer(id).remove({ force: true });
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return;
+      throw err;
+    }
+  }
+
+  async sidecarState(id: string): Promise<SidecarState> {
+    try {
+      const info = await this.docker.getContainer(id).inspect();
+      return info.State?.Running
+        ? { state: 'running', exitCode: null }
+        : { state: 'exited', exitCode: info.State?.ExitCode ?? null };
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404)
+        return { state: 'missing', exitCode: null };
+      throw err;
+    }
+  }
+
+  async sidecarLogs(id: string, tail: number): Promise<string> {
+    const logs = (await this.docker
+      .getContainer(id)
+      .logs({ stdout: true, stderr: true, tail, follow: false })) as unknown as Buffer;
+    const { stdout, stderr } = demuxDockerLogs(Buffer.from(logs));
+    return `${stdout}${stderr}`;
   }
 }

@@ -21,3 +21,14 @@ services:
     build: ./docker/base
     image: pi-panel/sandbox-base:latest
     profiles: ['build-only']
+
+  # REA reverse-engineering server. Optional, build with:
+  #   GHIDRA_URL=... GHIDRA_SHA256=... docker compose --profile build-only build rea
+  rea:
+    build:
+      context: ./docker/rea
+      args:
+        GHIDRA_URL: ${GHIDRA_URL:-}
+        GHIDRA_SHA256: ${GHIDRA_SHA256:-}
+    image: pi-panel/rea:6.8.0
+    profiles: ['build-only']

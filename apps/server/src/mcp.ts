@@ -14,6 +14,7 @@ import { SANDBOX_UID } from './paths.js';
 import type { ContainerRuntime } from './runtime.js';
 import { parseSentinelReport } from './sentinel.js';
 import type { SessionManager } from './sessions.js';
+import type { SidecarManager, SidecarStatus } from './sidecars.js';
 import type { TarEntry } from './tar.js';
 
 export interface McpOptions {
@@ -167,6 +168,7 @@ export class McpService {
     readonly store: McpStore,
     private readonly runtime: ContainerRuntime,
     private readonly sessions: SessionManager,
+    readonly sidecars: SidecarManager,
     opts: McpOptions = {},
   ) {
     this.harnessPath = opts.harnessPath ?? DEFAULT_HARNESS;
@@ -199,12 +201,24 @@ export class McpService {
     ).map((r) => r.project_id);
   }
 
-  update(id: number, input: ServerInput) {
+  async update(id: number, input: ServerInput) {
+    const before = this.store.get(id);
+    const specBefore =
+      before.type === 'managed' ? JSON.stringify(this.store.sidecarSpecFor(id)) : null;
     const server = this.store.update(id, input);
+    if (server.type === 'managed' && JSON.stringify(this.store.sidecarSpecFor(id)) !== specBefore) {
+      // The container definition or its environment changed: replace the running containers.
+      for (const projectId of this.projectsUsing(id)) {
+        await this.sidecars.stop(projectId, id);
+        await this.sidecars.start(projectId, id).catch(() => undefined); // failures show in its status
+      }
+    }
     return { server, ...this.applyToProjects(this.projectsUsing(id)) };
   }
 
-  delete(id: number) {
+  async delete(id: number) {
+    const server = this.store.get(id);
+    if (server.type === 'managed') await this.sidecars.removeServer(id);
     const projects = this.store.delete(id);
     return this.applyToProjects(projects);
   }
@@ -214,19 +228,66 @@ export class McpService {
     return { server, ...this.applyToProjects(this.projectsUsing(id)) };
   }
 
-  forProject(projectId: number) {
-    this.projectExists(projectId);
-    return { servers: this.store.projectServers(projectId) };
+  private async sidecarStates(projectId: number): Promise<Record<number, SidecarStatus>> {
+    const out: Record<number, SidecarStatus> = {};
+    for (const p of this.store.projectServers(projectId)) {
+      if (p.server.type === 'managed')
+        out[p.server.id] = await this.sidecars.status(projectId, p.server.id);
+    }
+    return out;
   }
 
-  setForProject(
+  async forProject(projectId: number) {
+    this.projectExists(projectId);
+    return {
+      servers: this.store.projectServers(projectId),
+      sidecars: await this.sidecarStates(projectId),
+    };
+  }
+
+  async setForProject(
     projectId: number,
     serverId: number,
     change: { enabled?: unknown; hiddenTools?: unknown },
   ) {
     this.projectExists(projectId);
+    const server = this.store.get(serverId);
     this.store.setProject(projectId, serverId, change);
-    return { servers: this.store.projectServers(projectId), ...this.applyToProjects([projectId]) };
+    let sidecarError: string | undefined;
+    if (server.type === 'managed' && typeof change.enabled === 'boolean') {
+      try {
+        if (change.enabled) await this.sidecars.start(projectId, serverId);
+        else await this.sidecars.stop(projectId, serverId);
+      } catch (err) {
+        // The server stays enabled; the error is shown next to it and it is retried on the next session.
+        sidecarError = err instanceof Error ? err.message : 'The container could not be started';
+      }
+    }
+    return {
+      servers: this.store.projectServers(projectId),
+      sidecars: await this.sidecarStates(projectId),
+      ...(sidecarError ? { sidecarError } : {}),
+      ...this.applyToProjects([projectId]),
+    };
+  }
+
+  async sidecarAction(projectId: number, serverId: number, action: unknown) {
+    this.projectExists(projectId);
+    if (this.store.get(serverId).type !== 'managed')
+      throw new McpError(400, 'That server is not a managed container');
+    if (action === 'stop') await this.sidecars.stop(projectId, serverId);
+    else if (action === 'start') await this.sidecars.start(projectId, serverId);
+    else if (action === 'restart') {
+      await this.sidecars.stop(projectId, serverId);
+      await this.sidecars.start(projectId, serverId);
+    } else throw new McpError(400, 'action must be start, stop or restart');
+    return { sidecar: await this.sidecars.status(projectId, serverId) };
+  }
+
+  async sidecarLogs(projectId: number, serverId: number, tail: unknown) {
+    this.projectExists(projectId);
+    const n = typeof tail === 'string' && /^\d+$/.test(tail) ? Number(tail) : 100;
+    return { logs: await this.sidecars.logs(projectId, serverId, n) };
   }
 
   import(json: unknown, name?: unknown) {
@@ -243,49 +304,64 @@ export class McpService {
     return { servers: created, warnings };
   }
 
-  /** Connects to one library server from a throwaway container with network, and records its tools. */
+  private async runHarness(
+    name: string,
+    config: Record<string, unknown>,
+    env: Record<string, string>,
+    network?: string,
+  ) {
+    const harness = await readFile(this.harnessPath);
+    const owner = { uid: SANDBOX_UID, gid: SANDBOX_UID };
+    const files: TarEntry[] = [
+      { path: 'lab/', ...owner },
+      ...['home', 'work', 'agent'].map((d) => ({ path: `lab/${d}/`, ...owner })),
+      { path: 'lab/mcp-discover.mjs', content: harness, mode: 0o644, ...owner },
+      {
+        path: 'lab/agent/mcp.json',
+        content: Buffer.from(JSON.stringify({ mcpServers: { [name]: config } })),
+        mode: 0o644,
+        ...owner,
+      },
+    ];
+    try {
+      return await this.runtime.runEphemeral({
+        files,
+        cmd: ['node', '/lab/mcp-discover.mjs'],
+        env: {
+          HOME: '/lab/home',
+          PI_CODING_AGENT_DIR: '/lab/agent',
+          NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+          PI_SKIP_VERSION_CHECK: '1',
+          PI_TELEMETRY: '0',
+          ...env,
+        },
+        timeoutMs: this.timeoutMs,
+        // Stdio and URL servers may need the network (npx downloads, remote APIs). A managed server is
+        // tested on its own private network instead, with no route out. Nothing else is mounted.
+        networkDisabled: false,
+        ...(network ? { network } : {}),
+      });
+    } catch {
+      throw new McpError(502, 'Failed to run the test container. Is the sandbox image built?');
+    }
+  }
+
+  /** Connects to one library server and records its tools. */
   async discover(id: number): Promise<ServerDto> {
     const { name, config, env, secretValues } = this.store.testConfig(id);
+    const managed = this.store.get(id).type === 'managed';
+    const secrets = managed ? this.store.sidecarSpecFor(id).secretValues : secretValues;
     if (this.testing.has(id) || this.active >= this.maxConcurrent) {
       throw new McpError(429, 'A test is already running; try again in a moment');
     }
     this.testing.add(id);
     this.active++;
     try {
-      const harness = await readFile(this.harnessPath);
-      const owner = { uid: SANDBOX_UID, gid: SANDBOX_UID };
-      const files: TarEntry[] = [
-        { path: 'lab/', ...owner },
-        ...['home', 'work', 'agent'].map((d) => ({ path: `lab/${d}/`, ...owner })),
-        { path: 'lab/mcp-discover.mjs', content: harness, mode: 0o644, ...owner },
-        {
-          path: 'lab/agent/mcp.json',
-          content: Buffer.from(JSON.stringify({ mcpServers: { [name]: config } })),
-          mode: 0o644,
-          ...owner,
-        },
-      ];
-      const secrets = secretValues;
-      let result;
-      try {
-        result = await this.runtime.runEphemeral({
-          files,
-          cmd: ['node', '/lab/mcp-discover.mjs'],
-          env: {
-            HOME: '/lab/home',
-            PI_CODING_AGENT_DIR: '/lab/agent',
-            NPM_CONFIG_UPDATE_NOTIFIER: 'false',
-            PI_SKIP_VERSION_CHECK: '1',
-            PI_TELEMETRY: '0',
-            ...env,
-          },
-          timeoutMs: this.timeoutMs,
-          // The server may need the network (npx downloads, remote APIs); nothing else is mounted.
-          networkDisabled: false,
-        });
-      } catch {
-        throw new McpError(502, 'Failed to run the test container. Is the sandbox image built?');
-      }
+      const result = managed
+        ? await this.sidecars.withTestSidecar(id, ({ network }) =>
+            this.runHarness(name, config, env, network),
+          )
+        : await this.runHarness(name, config, env);
       const raw = result.timedOut ? null : parseSentinelReport(result.stdout, BEGIN, END);
       const discovery: Discovery = raw
         ? sanitizeDiscovery(raw, secrets, Date.now())
@@ -333,10 +409,7 @@ export function registerMcp(app: FastifyInstance, svc: McpService) {
     handle(reply, () => svc.update(num(req.params.id), body(req))),
   );
   app.delete<P>('/api/mcp/servers/:id', (req, reply) =>
-    handle(reply, () => {
-      const result = svc.delete(num(req.params.id));
-      return reply.code(200).send(result);
-    }),
+    handle(reply, async () => reply.code(200).send(await svc.delete(num(req.params.id)))),
   );
   app.put<P>('/api/mcp/servers/:id/hidden', (req, reply) =>
     handle(reply, () => svc.setDefaultHidden(num(req.params.id), body(req).hidden)),
@@ -361,5 +434,19 @@ export function registerMcp(app: FastifyInstance, svc: McpService) {
           hiddenTools,
         });
       }),
+  );
+
+  type SP = { Params: { id: string; serverId: string } };
+  app.post<SP>('/api/projects/:id/mcp/:serverId/sidecar', (req, reply) =>
+    handle(reply, () =>
+      svc.sidecarAction(num(req.params.id), num(req.params.serverId), body(req).action),
+    ),
+  );
+  app.get<SP & { Querystring: { tail?: string } }>(
+    '/api/projects/:id/mcp/:serverId/sidecar/logs',
+    (req, reply) =>
+      handle(reply, () =>
+        svc.sidecarLogs(num(req.params.id), num(req.params.serverId), req.query.tail),
+      ),
   );
 }

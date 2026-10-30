@@ -10,7 +10,8 @@ export class McpError extends Error {
   }
 }
 
-export type McpType = 'stdio' | 'http';
+/** stdio and http run as part of pi; managed is a panel-run container reached over HTTP on a private network. */
+export type McpType = 'stdio' | 'http' | 'managed';
 export const EXPOSURES = ['direct', 'codemode', 'deferred', 'hidden'] as const;
 export type Exposure = (typeof EXPOSURES)[number];
 
@@ -67,6 +68,11 @@ export interface ServerInput {
   headers?: unknown;
   exposure?: unknown;
   timeout?: unknown;
+  image?: unknown;
+  port?: unknown;
+  readyLog?: unknown;
+  mountSamples?: unknown;
+  memoryMb?: unknown;
 }
 
 export interface ServerDto {
@@ -83,6 +89,12 @@ export interface ServerDto {
   exposure: Exposure | null;
   timeout: number | null;
   defaultHidden: string[];
+  /** Managed servers only. */
+  image: string | null;
+  port: number | null;
+  readyLog: string | null;
+  mountSamples: boolean;
+  memoryMb: number | null;
   discovery: Discovery | null;
   createdAt: number;
 }
@@ -102,6 +114,11 @@ interface ServerRow {
   exposure: Exposure | null;
   timeout: number | null;
   default_hidden: string;
+  image: string | null;
+  port: number | null;
+  ready_log: string | null;
+  mount_samples: number;
+  memory_mb: number | null;
   discovery: string | null;
   created_at: number;
 }
@@ -111,6 +128,7 @@ interface ProjectRow {
   server_id: number;
   enabled: number;
   hidden_tools: string | null;
+  container_id: string | null;
 }
 
 export interface ProjectServerDto {
@@ -120,6 +138,16 @@ export interface ProjectServerDto {
   hiddenOverride: string[] | null;
   hiddenTools: string[];
 }
+
+export const DEFAULT_MANAGED_PORT = 8765;
+export const DEFAULT_MEMORY_MB = 4096;
+/** Container image references: lowercase, no spaces; a tag or digest is optional. */
+const IMAGE_RE = /^[a-z0-9][a-z0-9._/:@-]{0,199}$/;
+
+export const sidecarName = (projectId: number, serverId: number) =>
+  `pp-mcp-${projectId}-${serverId}`;
+export const networkName = (projectId: number) => `pp-net-${projectId}`;
+export const sidecarAlias = (serverId: number) => `mcp-${serverId}`;
 
 const NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
@@ -249,6 +277,11 @@ export class McpStore {
       exposure: r.exposure,
       timeout: r.timeout,
       defaultHidden: JSON.parse(r.default_hidden) as string[],
+      image: r.image,
+      port: r.port,
+      readyLog: r.ready_log,
+      mountSamples: r.mount_samples === 1,
+      memoryMb: r.memory_mb,
       discovery: r.discovery ? (JSON.parse(r.discovery) as Discovery) : null,
       createdAt: r.created_at,
     };
@@ -267,7 +300,9 @@ export class McpStore {
   /** Validates input into the column values shared by create and update. */
   private fields(input: ServerInput, prev?: ServerRow) {
     const type = (input.type ?? prev?.type) as McpType;
-    if (type !== 'stdio' && type !== 'http') throw bad('type must be stdio or http');
+    if (type !== 'stdio' && type !== 'http' && type !== 'managed') {
+      throw bad('type must be stdio, http or managed');
+    }
     if (prev && input.type !== undefined && input.type !== prev.type)
       throw bad('type cannot be changed; create a new server instead');
     const description =
@@ -301,7 +336,68 @@ export class McpStore {
     let url: string | null = null;
     let env: StoredEntry[] = [];
     let headers: StoredEntry[] = [];
-    if (type === 'stdio') {
+    let image: string | null = null;
+    let port: number | null = null;
+    let readyLog: string | null = null;
+    let mountSamples = false;
+    let memoryMb: number | null = null;
+    if (type === 'managed') {
+      image =
+        input.image === undefined ? (prev?.image ?? null) : cleanText(input.image, 'image', 200);
+      if (!image || !IMAGE_RE.test(image)) {
+        throw bad(
+          'image must be a container image name such as pi-panel/rea:6.8.0 (lowercase, no spaces)',
+        );
+      }
+      command =
+        input.command === undefined
+          ? (prev?.command ?? null)
+          : cleanText(input.command, 'command', 200);
+      if (!command?.trim()) throw bad('command is required for managed servers');
+      args =
+        input.args === undefined
+          ? prev
+            ? (JSON.parse(prev.args) as string[])
+            : []
+          : cleanArgs(input.args);
+      for (const field of ['url', 'cwd', 'headers'] as const) {
+        const v = input[field];
+        if (v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0)) {
+          throw bad(`${field} does not apply to managed servers`);
+        }
+      }
+      const rawPort = input.port === undefined ? (prev?.port ?? DEFAULT_MANAGED_PORT) : input.port;
+      if (
+        typeof rawPort !== 'number' ||
+        !Number.isInteger(rawPort) ||
+        rawPort < 1 ||
+        rawPort > 65535
+      ) {
+        throw bad('port must be a whole number from 1 to 65535');
+      }
+      port = rawPort;
+      readyLog =
+        input.readyLog === undefined
+          ? (prev?.ready_log ?? null)
+          : cleanText(input.readyLog, 'readyLog', 200);
+      if (input.mountSamples !== undefined && typeof input.mountSamples !== 'boolean') {
+        throw bad('mountSamples must be a boolean');
+      }
+      mountSamples = (input.mountSamples as boolean | undefined) ?? prev?.mount_samples === 1;
+      const rawMem =
+        input.memoryMb === undefined ? (prev?.memory_mb ?? DEFAULT_MEMORY_MB) : input.memoryMb;
+      if (
+        typeof rawMem !== 'number' ||
+        !Number.isInteger(rawMem) ||
+        rawMem < 256 ||
+        rawMem > 32768
+      ) {
+        throw bad('memoryMb must be a whole number from 256 to 32768');
+      }
+      memoryMb = rawMem;
+      // The server's own environment (including secrets) goes to its container, never to pi.
+      env = this.cleanEntries(input.env, 'env', prevEnv);
+    } else if (type === 'stdio') {
       command =
         input.command === undefined
           ? (prev?.command ?? null)
@@ -323,7 +419,23 @@ export class McpStore {
         throw bad('command is only for stdio servers');
       headers = this.cleanEntries(input.headers, 'header', prevHeaders);
     }
-    return { type, description, timeout, exposure, command, args, cwd, url, env, headers };
+    return {
+      type,
+      description,
+      timeout,
+      exposure,
+      command,
+      args,
+      cwd,
+      url,
+      env,
+      headers,
+      image,
+      port,
+      readyLog,
+      mountSamples,
+      memoryMb,
+    };
   }
 
   create(input: ServerInput): ServerDto {
@@ -343,8 +455,9 @@ export class McpStore {
       this.db
         .prepare(
           `INSERT INTO mcp_servers (name, norm_name, description, type, command, args, cwd, url, env, headers,
-             exposure, timeout, default_hidden, discovery, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', NULL, ?)`,
+             exposure, timeout, default_hidden, image, port, ready_log, mount_samples, memory_mb,
+             discovery, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, ?, NULL, ?)`,
         )
         .run(
           input.name,
@@ -359,6 +472,11 @@ export class McpStore {
           JSON.stringify(f.headers),
           f.exposure,
           f.timeout,
+          f.image,
+          f.port,
+          f.readyLog,
+          f.mountSamples ? 1 : 0,
+          f.memoryMb,
           Date.now(),
         ).lastInsertRowid,
     );
@@ -371,11 +489,16 @@ export class McpStore {
     if (input.name !== undefined && input.name !== prev.name) throw bad('name cannot be changed');
     const f = this.fields(input, prev);
     const changedLaunch =
-      f.command !== prev.command || f.url !== prev.url || JSON.stringify(f.args) !== prev.args;
+      f.command !== prev.command ||
+      f.url !== prev.url ||
+      f.image !== prev.image ||
+      f.port !== prev.port ||
+      JSON.stringify(f.args) !== prev.args;
     this.db
       .prepare(
         `UPDATE mcp_servers SET description = ?, command = ?, args = ?, cwd = ?, url = ?, env = ?, headers = ?,
-           exposure = ?, timeout = ?, discovery = ? WHERE id = ?`,
+           exposure = ?, timeout = ?, ready_log = ?, mount_samples = ?, memory_mb = ?, image = ?, port = ?,
+           discovery = ? WHERE id = ?`,
       )
       // A changed launch target invalidates what we learned about the old one.
       .run(
@@ -388,6 +511,11 @@ export class McpStore {
         JSON.stringify(f.headers),
         f.exposure,
         f.timeout,
+        f.readyLog,
+        f.mountSamples ? 1 : 0,
+        f.memoryMb,
+        f.image,
+        f.port,
         changedLaunch ? null : prev.discovery,
         id,
       );
@@ -508,6 +636,7 @@ export class McpStore {
   private build(
     row: ServerRow,
     hidden: string[],
+    samples: string[] = [],
   ): { config: Record<string, unknown>; env: Record<string, string>; secretValues: string[] } {
     const env: Record<string, string> = {};
     const secretValues: string[] = [];
@@ -519,7 +648,21 @@ export class McpStore {
     if (row.description) config.description = row.description;
     if (row.timeout) config.timeout = row.timeout;
     if (row.exposure) config.exposure = row.exposure;
-    if (row.type === 'stdio') {
+    if (row.type === 'managed') {
+      // pi reaches the container by its alias on the project's private network. The container's own
+      // environment (secrets included) is set when the panel starts it and never passes through pi.
+      config.url = `http://${sidecarAlias(row.id)}:${row.port ?? DEFAULT_MANAGED_PORT}/mcp`;
+      if (row.mount_samples === 1) {
+        // The agent cannot see /samples itself, so tell it which files exist for the server to open.
+        const listed = samples.slice(0, 20).map((n) => `/samples/${n}`);
+        const more = samples.length > 20 ? ` and ${samples.length - 20} more` : '';
+        const hint =
+          samples.length === 0
+            ? 'Files uploaded to this project appear under /samples inside the server; none are uploaded yet.'
+            : `Files available inside the server: ${listed.join(', ')}${more}.`;
+        config.description = [row.description, hint].filter(Boolean).join(' ');
+      }
+    } else if (row.type === 'stdio') {
       config.command = row.command;
       const args = JSON.parse(row.args) as string[];
       if (args.length > 0) config.args = args;
@@ -554,7 +697,10 @@ export class McpStore {
   }
 
   /** The complete mcp.json content and environment for a project's enabled servers. */
-  projectConfig(projectId: number): {
+  projectConfig(
+    projectId: number,
+    opts: { samples?: string[] } = {},
+  ): {
     config: { mcpServers: Record<string, unknown> };
     env: Record<string, string>;
   } {
@@ -562,7 +708,7 @@ export class McpStore {
     const env: Record<string, string> = {};
     for (const p of this.projectServers(projectId)) {
       if (!p.enabled) continue;
-      const built = this.build(this.row(p.server.id), p.hiddenTools);
+      const built = this.build(this.row(p.server.id), p.hiddenTools, opts.samples);
       mcpServers[p.server.name] = built.config;
       Object.assign(env, built.env);
     }
@@ -579,5 +725,83 @@ export class McpStore {
   } {
     const row = this.row(id);
     return { name: row.name, ...this.build(row, []) };
+  }
+
+  // ---- managed servers (sidecar containers) ---------------------------------------------------------
+
+  /** What the panel needs to start a managed server's container. */
+  sidecarSpecFor(id: number): {
+    name: string;
+    image: string;
+    cmd: string[];
+    port: number;
+    readyLog: string | null;
+    mountSamples: boolean;
+    memoryMb: number;
+    env: Record<string, string>;
+    secretValues: string[];
+  } {
+    const row = this.row(id);
+    if (row.type !== 'managed' || !row.image || !row.command) {
+      throw new McpError(400, 'That server is not a managed container');
+    }
+    const env: Record<string, string> = {};
+    const secretValues: string[] = [];
+    for (const e of JSON.parse(row.env) as StoredEntry[]) {
+      env[e.key] = this.plain(e);
+      if (e.secret) secretValues.push(env[e.key]!);
+    }
+    return {
+      name: row.name,
+      image: row.image,
+      cmd: [row.command, ...(JSON.parse(row.args) as string[])],
+      port: row.port ?? DEFAULT_MANAGED_PORT,
+      readyLog: row.ready_log,
+      mountSamples: row.mount_samples === 1,
+      memoryMb: row.memory_mb ?? DEFAULT_MEMORY_MB,
+      env,
+      secretValues,
+    };
+  }
+
+  /** Managed servers enabled for a project, with the id of their running container if any. */
+  managedFor(projectId: number): { server: ServerDto; containerId: string | null }[] {
+    return this.projectServers(projectId)
+      .filter((p) => p.enabled && p.server.type === 'managed')
+      .map((p) => ({
+        server: p.server,
+        containerId: this.projectRow(projectId, p.server.id)?.container_id ?? null,
+      }));
+  }
+
+  containerId(projectId: number, serverId: number): string | null {
+    return this.projectRow(projectId, serverId)?.container_id ?? null;
+  }
+
+  /** Records the container a project's managed server runs in (null once it is gone). */
+  setContainerId(projectId: number, serverId: number, containerId: string | null) {
+    this.db
+      .prepare(
+        `INSERT INTO project_mcp (project_id, server_id, enabled, container_id) VALUES (?, ?, 0, ?)
+         ON CONFLICT(project_id, server_id) DO UPDATE SET container_id = excluded.container_id`,
+      )
+      .run(projectId, serverId, containerId);
+  }
+
+  /** Every container recorded for a project, or for a server across all projects. */
+  recordedContainers(filter: { projectId: number } | { serverId: number }): {
+    projectId: number;
+    serverId: number;
+    containerId: string;
+  }[] {
+    const [where, value] =
+      'projectId' in filter ? ['project_id', filter.projectId] : ['server_id', filter.serverId];
+    return (
+      this.db
+        .prepare(
+          `SELECT project_id, server_id, container_id FROM project_mcp WHERE ${where} = ? AND container_id IS NOT NULL`,
+        )
+        .all(value) as unknown as { project_id: number; server_id: number; container_id: string }[]
+    ).map((r) => ({ projectId: r.project_id, serverId: r.server_id, containerId: r.container_id }));
   }
 }

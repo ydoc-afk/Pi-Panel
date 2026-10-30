@@ -185,11 +185,26 @@ export function McpServers() {
               />
             ) : (
               <div>
-                <strong>{s.name}</strong> <small>({s.type === 'stdio' ? 'command' : 'URL'})</small>{' '}
+                <strong>{s.name}</strong>{' '}
+                <small>
+                  (
+                  {s.type === 'stdio'
+                    ? 'command'
+                    : s.type === 'managed'
+                      ? 'managed container'
+                      : 'URL'}
+                  )
+                </small>{' '}
                 &middot; <StateBadge server={s} testing={testing === s.id} />
                 {s.description && <div>{s.description}</div>}
                 <div>
-                  <code>{s.type === 'stdio' ? [s.command, ...s.args].join(' ') : s.url}</code>
+                  <code>
+                    {s.type === 'http'
+                      ? s.url
+                      : s.type === 'managed'
+                        ? `${s.image}: ${[s.command, ...s.args].join(' ')}`
+                        : [s.command, ...s.args].join(' ')}
+                  </code>
                 </div>
                 {s.discovery?.error && (
                   <div style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>

@@ -24,11 +24,20 @@ pi configuration.
 - **Applying changes**: pi has no reload over RPC, so idle sessions get a new process on their next
   prompt, and a session that is mid-run is replaced as soon as that run settles.
 
+## Managed containers
+
+Besides _Command_ and _URL_ servers there is a third type for servers that already speak streamable
+HTTP: a **managed container**. The panel runs it in its own container on a per-project private
+network with no internet, optionally mounts the project's uploaded samples read-only, and points pi at
+it with a URL entry. Its environment variables (secrets included) stay on the container and never
+reach pi. There is no stdio wrapper: a server must serve HTTP itself, as REA does. Start, stop,
+restart and logs are in the project's MCP section; see `docs/rea.md`.
+
 ## Trust and what is isolated
 
 - **Command servers run inside the project container**, spawned by pi with the agent's permissions.
   Any secret you give one is in pi's environment and visible to the agent. Prefer URL servers that hold
-  their own credentials, or (planned) managed sidecar containers.
+  their own credentials, or managed containers for servers that speak HTTP.
 - **Cloned repositories cannot add servers.** A repo's own `.pi/mcp.json` and `.pi/extensions` need
   project trust, and in RPC mode they did not run: checked against pi 1.4.0 with a hostile repo.
 - **Pins**: presets pin exact versions. `npx -y pkg` with no version fetches the newest release on every

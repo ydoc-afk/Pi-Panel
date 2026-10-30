@@ -13,3 +13,7 @@ export const SANDBOX_AGENT_DIR = '/home/sandbox/.pi/agent';
 
 /** uid/gid of the unprivileged user inside sandbox containers. */
 export const SANDBOX_UID = 1000;
+
+/** Files uploaded for analysis; mounted read-only into managed MCP containers only, never the session container. */
+export const samplesDir = (dataDir: string, projectId: number) =>
+  resolve(dataDir, 'samples', String(projectId));

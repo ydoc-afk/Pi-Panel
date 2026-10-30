@@ -4,6 +4,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
 import type { McpStore } from './mcp-store.js';
+import type { SamplesService } from './samples.js';
+import type { SidecarManager } from './sidecars.js';
 import type { ProviderStore } from './providers.js';
 import { RpcClient, type PiEvent } from './rpc-client.js';
 import type { ContainerRuntime } from './runtime.js';
@@ -62,6 +64,8 @@ export class SessionManager {
     private readonly providers: ProviderStore,
     private readonly dataDir: string,
     private readonly mcp: McpStore,
+    private readonly sidecars: SidecarManager,
+    private readonly samples: SamplesService,
   ) {
     // No pi process survives a panel restart, so nothing can still be running.
     db.prepare("UPDATE sessions SET status = 'idle' WHERE status = 'running'").run();
@@ -241,7 +245,10 @@ export class SessionManager {
     ];
     const provider = row.provider_id ? this.providers.find(row.provider_id) : undefined;
     let proc;
+    let sidecarsResult: Awaited<ReturnType<SidecarManager['ensureForProject']>> | undefined;
     try {
+      // Managed MCP servers must be up before pi starts, or it would list them as failed.
+      sidecarsResult = await this.sidecars.ensureForProject(row.project_id);
       const mcp = await this.writeAgentConfig(row.project_id);
       proc = await this.runtime.exec(project.container_id, {
         cmd,
@@ -259,6 +266,13 @@ export class SessionManager {
     }
     const client = new RpcClient(proc);
     client.onEvent((event) => this.record(id, event));
+    for (const f of sidecarsResult?.failed ?? []) {
+      this.record(id, {
+        type: 'panel_notice',
+        level: 'warning',
+        message: `MCP server "${f.server}" could not start: ${f.error}`,
+      });
+    }
     client.onClose((code, stderr) => this.handleClose(id, client, code, stderr));
     this.live.set(id, client);
     try {
@@ -297,7 +311,7 @@ export class SessionManager {
     };
     await write('models.json', this.providers.modelsJson());
     // Always written, even when empty, so servers removed in the panel do not linger in the file.
-    const mcp = this.mcp.projectConfig(projectId);
+    const mcp = this.mcp.projectConfig(projectId, { samples: this.samples.names(projectId) });
     await write('mcp.json', mcp.config);
     return mcp;
   }
