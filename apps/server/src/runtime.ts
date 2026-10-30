@@ -92,6 +92,8 @@ export interface ContainerRuntime {
   removeSidecar(id: string): Promise<void>;
   sidecarState(id: string): Promise<SidecarState>;
   sidecarLogs(id: string, tail: number): Promise<string>;
+  /** Whether the sandbox image that project containers are created from is present locally. */
+  hasSandboxImage(): Promise<boolean>;
 }
 
 /** In-memory runtime for tests and for running the panel without Docker. */
@@ -210,6 +212,13 @@ export class FakeRuntime implements ContainerRuntime {
   async sidecarState(id: string): Promise<SidecarState> {
     const sc = this.sidecars.get(id);
     return sc ? { state: sc.state, exitCode: sc.exitCode } : { state: 'missing', exitCode: null };
+  }
+
+  /** Set to false to simulate a missing sandbox image. */
+  sandboxImageAvailable = true;
+
+  async hasSandboxImage(): Promise<boolean> {
+    return this.sandboxImageAvailable;
   }
 
   async sidecarLogs(id: string, tail: number): Promise<string> {

@@ -161,6 +161,12 @@ export const getGitHub = () => request<GitHubAccount>('/api/github');
 export const connectGitHub = (token: string) =>
   request<GitHubAccount>('/api/github', send('PUT', { token }));
 export const disconnectGitHub = () => request<void>('/api/github', { method: 'DELETE' });
+/** Checks a token against GitHub without storing it. Omit the token to test the stored one. */
+export const testGitHub = (token?: string) =>
+  request<{ login: string; id: number }>('/api/github/test', send('POST', token ? { token } : {}));
+
+/** Whether the sandbox image that project containers are created from has been built. */
+export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
 export const getRepoStatus = (projectId: number) =>
   request<RepoStatus>(`/api/projects/${projectId}/github`);
 export const cloneRepo = (projectId: number, repo: string, branch?: string) =>

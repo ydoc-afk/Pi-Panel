@@ -133,6 +133,29 @@ export class GitHubService {
     return { login: user.login };
   }
 
+  /**
+   * Checks a token against GitHub and reports which account it belongs to. Nothing is stored.
+   * A blank token tests the stored one, when there is one.
+   */
+  async testToken(tokenInput: unknown): Promise<{ login: string; id: number }> {
+    let token: string;
+    if (typeof tokenInput === 'string' && tokenInput.trim() !== '') {
+      if (!/^\S{8,4096}$/.test(tokenInput.trim())) {
+        throw new GitHubError(400, 'token must be a non-empty string without whitespace');
+      }
+      token = tokenInput.trim();
+    } else {
+      const stored = this.optionalAccount();
+      if (!stored) throw new GitHubError(400, 'Paste a token to test, or connect one first');
+      token = stored.token;
+    }
+    const user = (await this.api<{ login?: string; id?: number }>('GET', '/user', token)) ?? {};
+    if (typeof user.login !== 'string' || typeof user.id !== 'number') {
+      throw new GitHubError(502, 'Unexpected response from GitHub');
+    }
+    return { login: user.login, id: user.id };
+  }
+
   disconnect() {
     this.db.prepare('DELETE FROM github_account WHERE id = 1').run();
   }
@@ -499,6 +522,10 @@ export function registerGitHub(app: FastifyInstance, gh: GitHubService) {
       connected: true,
       ...(await gh.connect(((req.body ?? {}) as { token?: unknown }).token)),
     })),
+  );
+  // Checks a token without saving it. Nothing is stored, and errors never echo the token.
+  app.post('/api/github/test', (req, reply) =>
+    handle(reply, async () => gh.testToken(((req.body ?? {}) as { token?: unknown }).token)),
   );
   app.delete('/api/github', async (_req, reply) => {
     gh.disconnect();
