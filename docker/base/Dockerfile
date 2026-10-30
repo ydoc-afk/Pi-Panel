@@ -15,7 +15,9 @@ RUN npm install -g --ignore-scripts ${PI_PACKAGE}@${PI_VERSION}
 # No update checks or telemetry from inside sandboxes.
 ENV PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0
 
-RUN useradd --create-home --uid 1000 --shell /bin/bash sandbox
+# The node image already has UID 1000 (user "node"): rename it rather than add a clashing user.
+RUN usermod --login sandbox --home /home/sandbox --move-home node \
+ && groupmod --new-name sandbox node
 USER sandbox
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

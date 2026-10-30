@@ -37,7 +37,9 @@ RUN npm install -g --ignore-scripts rea-agents@${REA_VERSION}
 ENV GHIDRA_INSTALL_DIR=/opt/ghidra \
     REA_LOG_LEVEL=info
 
-RUN useradd --create-home --uid 1000 --shell /bin/bash sandbox
+# The node image already has UID 1000 (user "node"): rename it rather than add a clashing user.
+RUN usermod --login sandbox --home /home/sandbox --move-home node \
+ && groupmod --new-name sandbox node
 USER sandbox
 WORKDIR /home/sandbox
 
