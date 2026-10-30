@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Button, Code, FileInput, Group, Stack, Text } from '@mantine/core';
 import { deleteSample, listSamples, uploadSample, type SampleFile } from './api.js';
+import { Collapsible, ErrorText } from './ui.js';
 
 const size = (n: number) =>
   n < 1024
@@ -13,7 +15,8 @@ export function Samples({ projectId }: { projectId: number }) {
   const [files, setFiles] = useState<SampleFile[]>([]);
   const [uploading, setUploading] = useState('');
   const [error, setError] = useState('');
-  const input = useRef<HTMLInputElement>(null);
+  // Changing the key clears the file picker once the picked files have been uploaded.
+  const [pickerKey, setPickerKey] = useState(0);
 
   const refresh = () =>
     listSamples(projectId)
@@ -24,10 +27,10 @@ export function Samples({ projectId }: { projectId: number }) {
     void refresh();
   }, [projectId]);
 
-  async function upload(list: FileList | null) {
-    if (!list) return;
+  async function upload(picked: File[]) {
+    if (picked.length === 0) return;
     setError('');
-    for (const file of Array.from(list)) {
+    for (const file of picked) {
       setUploading(file.name);
       try {
         await uploadSample(projectId, file);
@@ -37,36 +40,37 @@ export function Samples({ projectId }: { projectId: number }) {
       }
     }
     setUploading('');
-    if (input.current) input.current.value = '';
+    setPickerKey((k) => k + 1);
     await refresh();
   }
 
   return (
-    <details style={{ margin: '8px 0' }} open>
-      <summary>Samples ({files.length})</summary>
-      <p style={{ margin: '6px 0', fontSize: 13 }}>
-        Files for analysis tools. They are mounted read-only inside managed containers at{' '}
-        <code>/samples/&lt;name&gt;</code> and are not visible to the agent&apos;s own container.
-        Start a new session after changing the list so the agent learns the names.
-      </p>
-      <input
-        ref={input}
-        type="file"
-        multiple
-        disabled={!!uploading}
-        onChange={(e) => void upload(e.target.files)}
-      />
-      {uploading && <span> Uploading {uploading}&hellip;</span>}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-      <ul style={{ paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 4 }}>
+    <Collapsible title={`Samples (${files.length})`}>
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          Files for analysis tools. They are mounted read-only inside managed containers at{' '}
+          <Code>/samples/&lt;name&gt;</Code> and are not visible to the agent&apos;s own container.
+          Start a new session after changing the list so the agent learns the names.
+        </Text>
+        <FileInput
+          key={pickerKey}
+          multiple
+          disabled={!!uploading}
+          placeholder="Choose files to upload"
+          onChange={(v) => void upload(Array.isArray(v) ? v : v ? [v] : [])}
+        />
+        {uploading && <Text size="sm">Uploading {uploading}&hellip;</Text>}
+        <ErrorText error={error} />
         {files.map((f) => (
-          <li key={f.name}>
-            <code>{f.name}</code> <small>{size(f.size)}</small>{' '}
-            <button
+          <Group key={f.name} gap="xs">
+            <Code>{f.name}</Code>
+            <Text size="xs" c="dimmed">
+              {size(f.size)}
+            </Text>
+            <Button
+              size="xs"
+              variant="subtle"
+              color="red"
               onClick={() => {
                 if (confirm(`Delete ${f.name}?`)) {
                   void deleteSample(projectId, f.name)
@@ -76,10 +80,10 @@ export function Samples({ projectId }: { projectId: number }) {
               }}
             >
               Delete
-            </button>
-          </li>
+            </Button>
+          </Group>
         ))}
-      </ul>
-    </details>
+      </Stack>
+    </Collapsible>
   );
 }

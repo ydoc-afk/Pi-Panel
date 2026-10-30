@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Badge, Button, Checkbox, Code, Group, Stack, Text } from '@mantine/core';
 import {
   listProjectMcp,
   setProjectMcp,
@@ -10,6 +11,7 @@ import {
 } from './api.js';
 import { McpToolList } from './McpToolList.js';
 import { Samples } from './Samples.js';
+import { Collapsible, ErrorText } from './ui.js';
 
 const describeState = (s: SidecarStatus | undefined) =>
   !s
@@ -113,53 +115,77 @@ export function ProjectMcp({ projectId }: { projectId: number }) {
   );
 
   return (
-    <details style={{ margin: '12px 0' }} open>
-      <summary>
-        MCP servers{state ? ` (${servers.filter((s) => s.enabled).length} on)` : ''}
-      </summary>
-      {state && servers.length === 0 && (
-        <p>No servers in the library yet. Add some in the MCP tab.</p>
-      )}
-      <ul style={{ paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 8 }}>
+    <Collapsible
+      title={`MCP servers${state ? ` (${servers.filter((s) => s.enabled).length} on)` : ''}`}
+    >
+      <Stack gap="sm">
+        {state && servers.length === 0 && (
+          <Text size="sm" c="dimmed">
+            No servers in the library yet. Add some in the MCP tab.
+          </Text>
+        )}
         {servers.map((p) => {
           const tools = p.server.discovery?.tools ?? [];
           const managed = p.server.type === 'managed';
           const side = state?.sidecars[p.server.id];
+          const running = side?.state === 'running';
           return (
-            <li key={p.server.id}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={p.enabled}
-                  onChange={(e) => void change(p.server.id, { enabled: e.target.checked })}
-                />{' '}
-                <strong>{p.server.name}</strong>
-                {managed && <small> (managed container)</small>}
-                {p.server.description && <small> &mdash; {p.server.description}</small>}
-              </label>
+            <Stack key={p.server.id} gap={4}>
+              <Checkbox
+                checked={p.enabled}
+                onChange={(e) => void change(p.server.id, { enabled: e.currentTarget.checked })}
+                label={
+                  <>
+                    <Text span fw={600} size="sm">
+                      {p.server.name}
+                    </Text>
+                    {managed && (
+                      <Text span size="xs" c="dimmed">
+                        {' '}
+                        (managed container)
+                      </Text>
+                    )}
+                    {p.server.description && (
+                      <Text span size="xs" c="dimmed">
+                        {' '}
+                        &mdash; {p.server.description}
+                      </Text>
+                    )}
+                  </>
+                }
+              />
               {managed && p.enabled && (
-                <div style={{ margin: '4px 0 4px 24px' }}>
+                <Stack gap={4} ml={28}>
                   {working === p.server.id ? (
-                    <span>Working&hellip; a container can take a minute to start.</span>
+                    <Text size="sm" c="dimmed">
+                      Working&hellip; a container can take a minute to start.
+                    </Text>
                   ) : (
-                    <>
-                      Container:{' '}
-                      <strong
-                        style={{ color: side?.state === 'running' ? 'seagreen' : 'darkorange' }}
-                      >
+                    <Group gap="xs">
+                      <Text size="sm">Container:</Text>
+                      <Badge variant="light" color={running ? 'green' : 'orange'}>
                         {describeState(side)}
-                      </strong>{' '}
-                      <button
-                        onClick={() =>
-                          void control(p.server.id, side?.state === 'running' ? 'restart' : 'start')
-                        }
+                      </Badge>
+                      <Button
+                        size="xs"
+                        variant="light"
+                        onClick={() => void control(p.server.id, running ? 'restart' : 'start')}
                       >
-                        {side?.state === 'running' ? 'Restart' : 'Start'}
-                      </button>{' '}
-                      {side?.state === 'running' && (
-                        <button onClick={() => void control(p.server.id, 'stop')}>Stop</button>
-                      )}{' '}
-                      <button
+                        {running ? 'Restart' : 'Start'}
+                      </Button>
+                      {running && (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          color="red"
+                          onClick={() => void control(p.server.id, 'stop')}
+                        >
+                          Stop
+                        </Button>
+                      )}
+                      <Button
+                        size="xs"
+                        variant="subtle"
                         onClick={() =>
                           void sidecarLogs(projectId, p.server.id)
                             .then((l) =>
@@ -169,11 +195,12 @@ export function ProjectMcp({ projectId }: { projectId: number }) {
                         }
                       >
                         Logs
-                      </button>
-                    </>
+                      </Button>
+                    </Group>
                   )}
                   {logs[p.server.id] !== undefined && (
-                    <pre
+                    <Code
+                      block
                       style={{
                         fontSize: 12,
                         maxHeight: 200,
@@ -182,54 +209,51 @@ export function ProjectMcp({ projectId }: { projectId: number }) {
                       }}
                     >
                       {logs[p.server.id]}
-                    </pre>
+                    </Code>
                   )}
-                </div>
+                </Stack>
               )}
               {p.enabled && p.server.discovery?.state === 'failed' && (
-                <div style={{ color: 'crimson' }}>
+                <Text size="sm" c="red" ml={28}>
                   The last test failed: {p.server.discovery.error}
-                </div>
+                </Text>
               )}
               {p.enabled && !p.server.discovery && (
-                <div>
-                  <small>
-                    Not tested yet. Use &ldquo;Test connection&rdquo; in the MCP tab to list its
-                    tools.
-                  </small>
-                </div>
+                <Text size="xs" c="dimmed" ml={28}>
+                  Not tested yet. Use &ldquo;Test connection&rdquo; in the MCP tab to list its
+                  tools.
+                </Text>
               )}
               {p.enabled && tools.length > 0 && (
-                <details>
-                  <summary>
-                    Tools (
-                    {tools.length - tools.filter((t) => p.hiddenTools.includes(t.name)).length} of{' '}
-                    {tools.length} on
-                    {p.hiddenOverride ? ', customised for this project' : ''})
-                  </summary>
-                  <McpToolList
-                    tools={tools}
-                    hidden={p.hiddenTools}
-                    onChange={(hidden) => void change(p.server.id, { hiddenTools: hidden })}
-                  />
-                  {p.hiddenOverride && (
-                    <button onClick={() => void change(p.server.id, { hiddenTools: null })}>
-                      Reset to the server&apos;s defaults
-                    </button>
-                  )}
-                </details>
+                <Stack gap={4} ml={28}>
+                  <Collapsible
+                    defaultOpen={false}
+                    title={`Tools (${tools.length - tools.filter((t) => p.hiddenTools.includes(t.name)).length} of ${tools.length} on${p.hiddenOverride ? ', customised for this project' : ''})`}
+                  >
+                    <McpToolList
+                      tools={tools}
+                      hidden={p.hiddenTools}
+                      onChange={(hidden) => void change(p.server.id, { hiddenTools: hidden })}
+                    />
+                    {p.hiddenOverride && (
+                      <Button
+                        size="xs"
+                        variant="subtle"
+                        onClick={() => void change(p.server.id, { hiddenTools: null })}
+                      >
+                        Reset to the server&apos;s defaults
+                      </Button>
+                    )}
+                  </Collapsible>
+                </Stack>
               )}
-            </li>
+            </Stack>
           );
         })}
-      </ul>
-      {usesSamples && <Samples projectId={projectId} />}
-      {notice && <p>{notice}</p>}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-    </details>
+        {usesSamples && <Samples projectId={projectId} />}
+        {notice && <Text size="sm">{notice}</Text>}
+        <ErrorText error={error} />
+      </Stack>
+    </Collapsible>
   );
 }

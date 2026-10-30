@@ -1,5 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Anchor,
+  Button,
+  Code,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+} from '@mantine/core';
+import {
   cloneRepo,
   getGitHub,
   getRepoStatus,
@@ -8,6 +19,7 @@ import {
   type GitHubAccount,
   type RepoStatus,
 } from './api.js';
+import { Collapsible, ErrorText } from './ui.js';
 
 export function GitHubPanel({ projectId }: { projectId: number }) {
   const [account, setAccount] = useState<GitHubAccount | null>(null);
@@ -76,78 +88,95 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
     });
   };
 
-  if (!status || !account) return error ? <p role="alert">{error}</p> : <p>Loading GitHub...</p>;
+  if (!status || !account) {
+    return error ? <ErrorText error={error} /> : <Loader size="sm" />;
+  }
 
   return (
-    <details style={{ margin: '12px 0' }} open>
-      <summary>GitHub{status.repo ? `: ${status.repo}` : ''}</summary>
-      {!account.connected && (
-        <p>
-          Connect GitHub in the GitHub tab to push and open pull requests. Public repositories can
-          still be cloned.
-        </p>
-      )}
-      {!status.repo ? (
-        <form onSubmit={clone} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            placeholder="owner/name or https://github.com/owner/name"
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            style={{ minWidth: 280 }}
-          />
-          <input
-            placeholder="Branch (optional)"
-            value={cloneBranch}
-            onChange={(e) => setCloneBranch(e.target.value)}
-          />
-          <button disabled={busy || !repo.trim()}>Clone into workspace</button>
-        </form>
-      ) : (
-        <div style={{ display: 'grid', gap: 12 }}>
-          <div>
-            On <strong>{status.branch ?? 'no branch'}</strong> &middot; {status.changes} uncommitted
-            change{status.changes === 1 ? '' : 's'}
-          </div>
-          {account.connected && (
-            <form onSubmit={push} style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <input
-                placeholder="Branch to push, e.g. pi/my-change"
-                value={branch}
-                onChange={(e) => setBranch(e.target.value)}
+    <Collapsible title={`GitHub${status.repo ? `: ${status.repo}` : ''}`}>
+      <Stack gap="sm">
+        {!account.connected && (
+          <Text size="sm" c="dimmed">
+            Connect GitHub in the GitHub tab to push and open pull requests. Public repositories can
+            still be cloned.
+          </Text>
+        )}
+        {!status.repo ? (
+          <form onSubmit={clone}>
+            <Group gap="xs" align="flex-end">
+              <TextInput
+                placeholder="owner/name or https://github.com/owner/name"
+                value={repo}
+                onChange={(e) => setRepo(e.currentTarget.value)}
+                w={320}
               />
-              <input
-                placeholder="Commit message (optional)"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                style={{ minWidth: 240 }}
+              <TextInput
+                placeholder="Branch (optional)"
+                value={cloneBranch}
+                onChange={(e) => setCloneBranch(e.currentTarget.value)}
               />
-              <button disabled={busy || !branch.trim()}>Commit &amp; push</button>
-            </form>
-          )}
-          {pushedBranch && account.connected && (
-            <form onSubmit={openPr} style={{ display: 'grid', gap: 8, maxWidth: 480 }}>
-              <strong>Open a pull request from {pushedBranch}</strong>
-              <input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
-              <textarea
-                placeholder="Description (optional)"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-              />
-              <button disabled={busy || !title.trim()}>Open pull request</button>
-              {prUrl && (
-                <a href={prUrl} target="_blank" rel="noopener noreferrer">
-                  {prUrl}
-                </a>
-              )}
-            </form>
-          )}
-        </div>
-      )}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-    </details>
+              <Button type="submit" disabled={busy || !repo.trim()}>
+                Clone into workspace
+              </Button>
+            </Group>
+          </form>
+        ) : (
+          <>
+            <Text size="sm">
+              On <Code>{status.branch ?? 'no branch'}</Code> · {status.changes} uncommitted change
+              {status.changes === 1 ? '' : 's'}
+            </Text>
+            {account.connected && (
+              <form onSubmit={push}>
+                <Group gap="xs" align="flex-end">
+                  <TextInput
+                    placeholder="Branch to push, e.g. pi/my-change"
+                    value={branch}
+                    onChange={(e) => setBranch(e.currentTarget.value)}
+                  />
+                  <TextInput
+                    placeholder="Commit message (optional)"
+                    value={message}
+                    onChange={(e) => setMessage(e.currentTarget.value)}
+                    w={260}
+                  />
+                  <Button type="submit" disabled={busy || !branch.trim()}>
+                    Commit &amp; push
+                  </Button>
+                </Group>
+              </form>
+            )}
+            {pushedBranch && account.connected && (
+              <form onSubmit={openPr}>
+                <Stack gap="xs" maw={520}>
+                  <Text fw={600}>Open a pull request from {pushedBranch}</Text>
+                  <TextInput
+                    placeholder="Title"
+                    value={title}
+                    onChange={(e) => setTitle(e.currentTarget.value)}
+                  />
+                  <Textarea
+                    placeholder="Description (optional)"
+                    value={body}
+                    onChange={(e) => setBody(e.currentTarget.value)}
+                  />
+                  <Group gap="xs">
+                    <Button type="submit" disabled={busy || !title.trim()}>
+                      Open pull request
+                    </Button>
+                  </Group>
+                  {prUrl && (
+                    <Anchor href={prUrl} target="_blank" rel="noopener noreferrer" size="sm">
+                      {prUrl}
+                    </Anchor>
+                  )}
+                </Stack>
+              </form>
+            )}
+          </>
+        )}
+        <ErrorText error={error} />
+      </Stack>
+    </Collapsible>
   );
 }
