@@ -1,0 +1,19 @@
+services:
+  pi-panel:
+    build: .
+    ports:
+      - '3000:3000'
+    volumes:
+      - pi-panel-data:/data
+      # The backend is the only component that talks to Docker (project sandboxes).
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+  # Built on demand; project containers are created from this image.
+  sandbox-base:
+    build: ./docker/base
+    image: pi-panel/sandbox-base:latest
+    profiles: ['build-only']
+
+volumes:
+  pi-panel-data:
