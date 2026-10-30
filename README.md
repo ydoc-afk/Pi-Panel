@@ -4,7 +4,7 @@ A self-hosted web panel for running the [pi](https://pi.dev) coding agent in iso
 containers. Create projects, talk to pi in live sessions, connect GitHub, manage providers, packages and
 MCP servers, and build and test your own pi extensions, skills, prompts and themes, all from the browser.
 
-> **Status: early and single-admin.** Everything below was developed and tested against a fake container
+> **Status: early.** Everything below was developed and tested against a fake container
 > runtime and, where noted, against the real pi, real MCP servers and the real REA. The sandbox and panel
 > images build and run under Docker Compose; networks, bind mounts and sidecars have not yet been run end
 > to end. See [What has been verified](#what-has-been-verified) before relying on it.
@@ -27,8 +27,37 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
   URL servers, plus **managed containers** for servers that speak HTTP (such as
   [REA](https://github.com/morluto/rea)): isolated, on a private network, with uploadable samples. The
   MCP tab can build the REA image for you from a Ghidra download link and checksum.
-- **Interface.** Light, dark or system colour scheme, and a choice of accent colours. Both are remembered
-  per browser.
+- **Accounts.** The first account is the admin. Others can register from the sign-in page and cannot sign
+  in until the admin approves them in the Users tab. Members work in projects and sessions; providers,
+  GitHub, the MCP library and user management stay admin only. Projects, keys and tokens are still shared
+  by everyone on the panel, so approve only people you trust.
+- **Interface.** Light, dark or system colour scheme, a choice of accent colours, and tooltips on the main
+  controls. Both are remembered per browser.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/sign-in.png" alt="Sign in" width="100%"></td>
+    <td><img src="docs/screenshots/register.png" alt="Request an account" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Sign in</sub></td>
+    <td align="center"><sub>Request an account, approved by the admin</sub></td>
+  </tr>
+</table>
+
+![Users tab with pending registrations](docs/screenshots/users-light.png)
+_Review registrations in the Users tab (light theme)._
+
+![Projects](docs/screenshots/projects-dark.png)
+_One sandboxed container per project (dark theme)._
+
+![Providers](docs/screenshots/providers-dark.png)
+_Providers, with Test connection and model discovery._
+
+![MCP servers](docs/screenshots/mcp-dark.png)
+_MCP library with one-click starters and a registry search._
 
 ## Quick start (Docker)
 

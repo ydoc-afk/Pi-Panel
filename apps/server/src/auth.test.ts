@@ -75,4 +75,107 @@ describe('auth', () => {
     expect((await t.app.inject({ url: '/api/health' })).statusCode).toBe(200);
     expect((await t.app.inject({ url: '/api/projects' })).statusCode).toBe(401);
   });
+
+  describe('registration and approval', () => {
+    const MEMBER = 'member-password-1';
+    let admin: string;
+
+    beforeEach(async () => {
+      admin = cookieOf(await t.post('/api/auth/setup', { username: 'admin', password: PASSWORD }))!;
+    });
+
+    const get = (url: string, cookie: string) => t.app.inject({ url, headers: { cookie } });
+    const register = (username = 'sam') =>
+      t.post('/api/auth/register', { username, password: MEMBER });
+    const idOf = async (username: string) =>
+      ((await get('/api/admin/users', admin)).json() as { id: number; username: string }[]).find(
+        (u) => u.username === username,
+      )!.id;
+
+    it('refuses registration before the admin exists', async () => {
+      const fresh = setup();
+      const res = await fresh.post('/api/auth/register', { username: 'sam', password: MEMBER });
+      expect(res.statusCode).toBe(409);
+    });
+
+    it('creates a pending account that cannot sign in yet', async () => {
+      expect((await register()).statusCode).toBe(202);
+      const res = await t.post('/api/auth/login', { username: 'sam', password: MEMBER });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error).toMatch(/waiting/);
+      expect(cookieOf(res)).toBeUndefined();
+      // A wrong password still looks like any other failed sign-in.
+      const wrong = await t.post('/api/auth/login', {
+        username: 'sam',
+        password: 'not-the-password',
+      });
+      expect(wrong.statusCode).toBe(401);
+    });
+
+    it('rejects duplicate and invalid registrations', async () => {
+      await register();
+      expect((await register()).statusCode).toBe(409);
+      expect((await register('admin')).statusCode).toBe(409);
+      expect(
+        (await t.post('/api/auth/register', { username: 'sam2', password: 'short' })).statusCode,
+      ).toBe(400);
+    });
+
+    it('lets the admin approve, and then the member signs in with the member role', async () => {
+      await register();
+      const id = await idOf('sam');
+      expect((await t.post(`/api/admin/users/${id}/approve`, {}, admin)).statusCode).toBe(200);
+      const login = await t.post('/api/auth/login', { username: 'sam', password: MEMBER });
+      expect(login.statusCode).toBe(200);
+      expect(login.json().user.role).toBe('member');
+      expect((await get('/api/projects', cookieOf(login)!)).statusCode).toBe(200);
+    });
+
+    it('keeps members away from admin routes and shared credentials', async () => {
+      await register();
+      await t.post(`/api/admin/users/${await idOf('sam')}/approve`, {}, admin);
+      const member = cookieOf(
+        await t.post('/api/auth/login', { username: 'sam', password: MEMBER }),
+      )!;
+      expect((await get('/api/admin/users', member)).statusCode).toBe(403);
+      expect((await t.post('/api/providers', { name: 'x' }, member)).statusCode).toBe(403);
+      expect((await t.post('/api/mcp/import', {}, member)).statusCode).toBe(403);
+      expect((await get('/api/mcp/registry', member)).statusCode).toBe(403);
+      expect((await get('/api/providers', member)).statusCode).toBe(200);
+      expect((await get('/api/admin/users', admin)).statusCode).toBe(200);
+    });
+
+    it('rejecting a member ends their session', async () => {
+      await register();
+      const id = await idOf('sam');
+      await t.post(`/api/admin/users/${id}/approve`, {}, admin);
+      const member = cookieOf(
+        await t.post('/api/auth/login', { username: 'sam', password: MEMBER }),
+      )!;
+      await t.post(`/api/admin/users/${id}/reject`, {}, admin);
+      expect((await get('/api/projects', member)).statusCode).toBe(401);
+      const again = await t.post('/api/auth/login', { username: 'sam', password: MEMBER });
+      expect(again.statusCode).toBe(403);
+    });
+
+    it('does not let the admin account be changed or removed, and deletes members', async () => {
+      const adminId = await idOf('admin');
+      expect((await t.post(`/api/admin/users/${adminId}/reject`, {}, admin)).statusCode).toBe(400);
+      const del = await t.app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${adminId}`,
+        headers: { cookie: admin },
+      });
+      expect(del.statusCode).toBe(400);
+      await register();
+      const id = await idOf('sam');
+      const ok = await t.app.inject({
+        method: 'DELETE',
+        url: `/api/admin/users/${id}`,
+        headers: { cookie: admin },
+      });
+      expect(ok.statusCode).toBe(200);
+      expect((await get('/api/admin/users', admin)).json()).toHaveLength(1);
+    });
+  });
 });
