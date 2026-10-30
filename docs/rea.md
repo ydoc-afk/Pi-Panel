@@ -21,17 +21,23 @@ a test.
 1. Pick a Ghidra release from <https://github.com/NationalSecurityAgency/ghidra/releases>, copy the
    zip's download URL, and compute its checksum with `sha256sum`. The image build requires both and
    refuses to build without them, so nothing is downloaded unverified.
-2. Build the image on the Docker host:
+2. Build the image on the Docker host. The easiest route is the **Build REA** card at the top of the MCP
+   tab: paste the Ghidra download link and the checksum, then press **Build REA image**. The panel builds
+   the image in the background and streams the log. The build downloads Ghidra and a JDK, so it can take
+   a while. When it finishes, the card offers **Add REA**.
+
+   To build it by hand instead:
 
    ```bash
    GHIDRA_URL=https://... GHIDRA_SHA256=... docker compose --profile build-only build rea
    ```
 
    The image is tagged `pi-panel/rea:6.8.0`. To use a different REA, change `REA_VERSION`, the tag, and
-   the preset or library entry together. Pi-Panel never pulls images; if one is missing, starting the
-   server says so.
+   the preset or library entry together. Pi-Panel never pulls images; the MCP tab shows whether the REA
+   image is present.
 
-3. In the MCP tab pick the **REA** preset, add it, and press **Test connection** to list its tools.
+3. In the MCP tab add the **REA** preset (or press **Add REA** on the build card), and press **Test
+   connection** to list its tools.
 4. In a project, switch **rea** on. Pi-Panel creates the project's private network, starts the container
    and waits for it to announce it is ready. Upload files in the **Samples** panel and start a new
    session so the agent learns their names.

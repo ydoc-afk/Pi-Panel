@@ -4,26 +4,31 @@ A self-hosted web panel for running the [pi](https://pi.dev) coding agent in iso
 containers. Create projects, talk to pi in live sessions, connect GitHub, manage providers, packages and
 MCP servers, and build and test your own pi extensions, skills, prompts and themes, all from the browser.
 
-> **Status: early, single-admin, never yet run against a Docker daemon.** Everything below was developed
-> and tested against a fake container runtime and, where noted, against the real pi, real MCP servers and
-> the real REA. The Docker integration (image builds, networks, bind mounts) is written but unverified.
-> See [What has been verified](#what-has-been-verified) before relying on it.
+> **Status: early and single-admin.** Everything below was developed and tested against a fake container
+> runtime and, where noted, against the real pi, real MCP servers and the real REA. The sandbox and panel
+> images build and run under Docker Compose; networks, bind mounts and sidecars have not yet been run end
+> to end. See [What has been verified](#what-has-been-verified) before relying on it.
 
 ## What it does
 
 - **Projects and sessions.** One container per project with a bind-mounted workspace; pi runs inside it.
   Sessions stream live over WebSocket, persist their transcript, and resume.
 - **Providers.** Anthropic, OpenAI, and any OpenAI-compatible server (llama.cpp, Unsloth Studio, ...).
-  Keys are encrypted at rest; model lists are discovered from the provider.
-- **GitHub.** Clone, commit, push and open pull requests with a personal access token. Git runs in the
-  panel, never in the sandbox, and the token never enters a container.
+  Keys are encrypted at rest. _Test connection_ checks a provider's settings before you save them, and
+  model lists are discovered from the provider.
+- **GitHub.** Clone, commit, push and open pull requests with a personal access token. _Test token_ checks
+  a token against GitHub before you connect it. Git runs in the panel, never in the sandbox, and the token
+  never enters a container.
 - **Pi packages.** Install npm pi packages per project, with an enforced review step that pins the exact
   version you looked at and disables install scripts.
 - **Package lab.** Scaffold and test extensions, skills, prompts and themes in a throwaway container with
   no network and no credentials, using the real pi SDK.
 - **MCP servers.** A library of servers with a checkbox per server per project and per tool. Command and
   URL servers, plus **managed containers** for servers that speak HTTP (such as
-  [REA](https://github.com/morluto/rea)): isolated, on a private network, with uploadable samples.
+  [REA](https://github.com/morluto/rea)): isolated, on a private network, with uploadable samples. The
+  MCP tab can build the REA image for you from a Ghidra download link and checksum.
+- **Interface.** Light, dark or system colour scheme, and a choice of accent colours. Both are remembered
+  per browser.
 
 ## Quick start (Docker)
 
@@ -47,8 +52,9 @@ the host: run it only on a machine and network you trust, and put it behind HTTP
 `COOKIE_SECURE: 'true'` to the `pi-panel` service's `environment` in `docker-compose.yml`) if anyone
 else can reach it.
 
-Optional: build the REA reverse-engineering image, which needs a Ghidra download you choose and verify
-(see [docs/rea.md](docs/rea.md)).
+Optional: the REA reverse-engineering image needs a Ghidra release you choose and verify. In the MCP tab,
+paste its download link and SHA-256 checksum and press **Build REA image**, or build it by hand (see
+[docs/rea.md](docs/rea.md)).
 
 ## Development
 
@@ -81,7 +87,7 @@ real REA, and are skipped unless you point them at installs (details in each doc
 ```
 apps/server          Fastify + TypeScript API: auth, projects, sessions, providers, GitHub, packages, lab, MCP
 apps/server/assets   scripts that run inside throwaway containers (package lab, MCP discovery)
-apps/web             React + Vite UI (served by the server in the production image)
+apps/web             React, Mantine and Vite UI (served by the server in the production image)
 docker/base          sandbox image: Node 24 + pi (pinned)
 docker/rea           optional REA image: Node, JDK 21, Ghidra
 docs/                design notes and how-tos
@@ -108,8 +114,10 @@ docs/                design notes and how-tos
 | pi SDK harness, `pi mcp list --json`, generated `mcp.json`, hidden tools    | Real pi 1.4.0                                                  |
 | MCP env passing, secret redaction, repo-local `.pi` not executing           | Real pi and a real MCP server                                  |
 | REA catalog over HTTP (229 tools, 32 destructive hidden by default)         | Real REA 6.8.0 and real pi                                     |
-| Web UI flows and serving the built UI                                       | Driven in a real browser (Playwright) and with the real server |
-| **Docker: image builds, networks, mounts, `exec`, sidecars**                | **Not verified: no Docker daemon was available**               |
+| Web UI flows (before the Mantine redesign) and serving the built UI         | Driven in a real browser (Playwright) and with the real server |
+| Mantine redesign: typecheck, production build, lint                         | Automated checks only; not yet driven in a browser             |
+| **Docker: sandbox and panel images build; the panel container runs**        | **Built and started with Docker Compose on a real host**       |
+| **Docker: networks, mounts, `exec`, sidecars, project sessions**            | **Not verified end to end**                                    |
 | **Ghidra / JDK analysis inside the REA image**                              | **Not verified**                                               |
 
 Expect to fix things on the first real run, and please report what breaks.
