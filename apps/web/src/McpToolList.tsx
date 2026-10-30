@@ -1,3 +1,4 @@
+import { Badge, Checkbox, Stack, Text } from '@mantine/core';
 import type { McpTool } from './api.js';
 
 /** A checkbox per tool: checked means the model can use it, unchecked hides it. */
@@ -20,25 +21,38 @@ export function McpToolList({
     onChange([...next]);
   };
   return (
-    <ul style={{ listStyle: 'none', paddingLeft: 0, display: 'grid', gap: 4, margin: '6px 0' }}>
+    <Stack gap="xs" my="xs">
       {tools.map((t) => (
-        <li key={t.name}>
-          <label>
-            <input
-              type="checkbox"
-              disabled={disabled}
-              checked={!hiddenSet.has(t.name)}
-              onChange={(e) => toggle(t.name, e.target.checked)}
-            />{' '}
-            <code>{t.name}</code>
-            {t.annotations.destructiveHint && (
-              <small style={{ color: 'crimson' }}> destructive</small>
-            )}
-            {t.annotations.readOnlyHint && <small style={{ color: 'seagreen' }}> read-only</small>}
-            {t.description && <small> &mdash; {t.description}</small>}
-          </label>
-        </li>
+        <Checkbox
+          key={t.name}
+          disabled={disabled}
+          checked={!hiddenSet.has(t.name)}
+          onChange={(e) => toggle(t.name, e.currentTarget.checked)}
+          label={
+            <>
+              <Text span size="sm" ff="monospace">
+                {t.name}
+              </Text>
+              {t.annotations.destructiveHint && (
+                <Badge color="red" variant="light" size="xs" ml={6}>
+                  destructive
+                </Badge>
+              )}
+              {t.annotations.readOnlyHint && (
+                <Badge color="green" variant="light" size="xs" ml={6}>
+                  read-only
+                </Badge>
+              )}
+              {t.description && (
+                <Text span size="xs" c="dimmed">
+                  {' '}
+                  &mdash; {t.description}
+                </Text>
+              )}
+            </>
+          }
+        />
       ))}
-    </ul>
+    </Stack>
   );
 }

@@ -1,5 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Autocomplete,
+  Badge,
+  Button,
+  Checkbox,
+  Code,
+  Group,
+  Paper,
+  Select,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Textarea,
+} from '@mantine/core';
+import {
   listLabPackages,
   runLab,
   scaffoldLabPackage,
@@ -9,6 +24,7 @@ import {
   type LabRun,
   type LabTest,
 } from './api.js';
+import { Collapsible, ErrorText, mono } from './ui.js';
 
 const KINDS: LabKind[] = ['extension', 'skill', 'prompt', 'theme'];
 
@@ -51,121 +67,184 @@ function toTests(rows: TestRow[]): { tests: LabTest[] } | { error: string } {
   return { tests };
 }
 
-const mono = { fontFamily: 'ui-monospace, monospace', fontSize: 13 } as const;
-
 function Diagnostics({ items }: { items: LabDiagnostic[] }) {
   if (items.length === 0) return null;
   return (
-    <ul style={{ paddingLeft: 18 }}>
+    <Stack gap={2}>
       {items.map((d, i) => (
-        <li key={i} style={{ color: d.type === 'error' ? 'crimson' : 'darkorange' }}>
-          <strong>{d.kind}</strong> {d.path}: {d.message}
-        </li>
+        <Text key={i} size="sm" c={d.type === 'error' ? 'red' : 'orange'}>
+          <Text span fw={600} inherit>
+            {d.kind}
+          </Text>{' '}
+          {d.path}: {d.message}
+        </Text>
       ))}
-    </ul>
+    </Stack>
   );
 }
 
 function Results({ result }: { result: LabRun }) {
   const r = result.report;
   const failed = result.status !== 'completed' || !r?.ok;
+  const verdict =
+    result.status === 'timeout'
+      ? 'Timed out'
+      : result.status === 'no-report'
+        ? 'No report produced'
+        : r?.ok
+          ? 'Passed'
+          : 'Failed';
   return (
-    <div style={{ border: '1px solid #8886', borderRadius: 6, padding: 12, margin: '12px 0' }}>
-      <strong style={{ color: failed ? 'crimson' : 'seagreen' }}>
-        {result.status === 'timeout'
-          ? 'Timed out'
-          : result.status === 'no-report'
-            ? 'No report produced'
-            : r?.ok
-              ? 'Passed'
-              : 'Failed'}
-      </strong>{' '}
-      <small>
-        {result.run.files} files copied, {(result.run.durationMs / 1000).toFixed(1)} s
-        {r?.sdkVersion ? `, pi ${r.sdkVersion}` : ''}
-      </small>
-      {result.run.skipped.length > 0 && (
-        <details>
-          <summary>{result.run.skipped.length} item(s) not copied</summary>
-          <ul>
-            {result.run.skipped.map((s) => (
-              <li key={s}>{s}</li>
+    <Paper withBorder p="md" radius="md" mt="sm">
+      <Stack gap="sm">
+        <Group gap="xs">
+          <Badge color={failed ? 'red' : 'green'} variant="filled">
+            {verdict}
+          </Badge>
+          <Text size="xs" c="dimmed">
+            {result.run.files} files copied, {(result.run.durationMs / 1000).toFixed(1)} s
+            {r?.sdkVersion ? `, pi ${r.sdkVersion}` : ''}
+          </Text>
+        </Group>
+
+        {result.run.skipped.length > 0 && (
+          <Collapsible
+            defaultOpen={false}
+            title={`${result.run.skipped.length} item(s) not copied`}
+          >
+            <Stack gap={2}>
+              {result.run.skipped.map((s) => (
+                <Text key={s} size="sm">
+                  {s}
+                </Text>
+              ))}
+            </Stack>
+          </Collapsible>
+        )}
+
+        {r && (
+          <>
+            {r.harnessError && (
+              <Code block c="red" style={{ whiteSpace: 'pre-wrap' }}>
+                {r.harnessError}
+              </Code>
+            )}
+            {r.sessionError && (
+              <Text size="sm" c="red">
+                Session error: {r.sessionError}
+              </Text>
+            )}
+            {(r.extensionErrors ?? []).map((e) => (
+              <Text key={e.path} size="sm" c="red" style={{ whiteSpace: 'pre-wrap' }}>
+                <Text span fw={600} inherit>
+                  {e.path}
+                </Text>{' '}
+                failed to load: {e.error}
+              </Text>
             ))}
-          </ul>
-        </details>
-      )}
-      {r && (
-        <>
-          {r.harnessError && (
-            <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{r.harnessError}</pre>
-          )}
-          {r.sessionError && <p style={{ color: 'crimson' }}>Session error: {r.sessionError}</p>}
-          {(r.extensionErrors ?? []).map((e) => (
-            <p key={e.path} style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>
-              <strong>{e.path}</strong> failed to load: {e.error}
-            </p>
-          ))}
-          <Diagnostics items={r.diagnostics ?? []} />
-          <dl style={{ display: 'grid', gridTemplateColumns: 'max-content 1fr', gap: '2px 12px' }}>
-            <dt>Extensions</dt>
-            <dd>{(r.extensions ?? []).join(', ') || 'none'}</dd>
-            <dt>Tools</dt>
-            <dd>
-              {(r.tools ?? []).length === 0
-                ? 'none'
-                : (r.tools ?? []).map((t) => (
-                    <details key={t.name}>
-                      <summary>
-                        <code>{t.name}</code> &mdash; {t.description}
-                      </summary>
-                      <pre style={mono}>{JSON.stringify(t.parameters, null, 2)}</pre>
-                    </details>
+            <Diagnostics items={r.diagnostics ?? []} />
+
+            <Table verticalSpacing="xs" withRowBorders={false}>
+              <Table.Tbody>
+                <Table.Tr>
+                  <Table.Td c="dimmed" w={120}>
+                    Extensions
+                  </Table.Td>
+                  <Table.Td>{(r.extensions ?? []).join(', ') || 'none'}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Tools</Table.Td>
+                  <Table.Td>
+                    {(r.tools ?? []).length === 0 ? (
+                      'none'
+                    ) : (
+                      <Stack gap={4}>
+                        {(r.tools ?? []).map((t) => (
+                          <Collapsible
+                            key={t.name}
+                            defaultOpen={false}
+                            title={
+                              <>
+                                <Code>{t.name}</Code>{' '}
+                                <Text span size="sm" c="dimmed">
+                                  {t.description}
+                                </Text>
+                              </>
+                            }
+                          >
+                            <Code block style={mono}>
+                              {JSON.stringify(t.parameters, null, 2)}
+                            </Code>
+                          </Collapsible>
+                        ))}
+                      </Stack>
+                    )}
+                  </Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Commands</Table.Td>
+                  <Table.Td>
+                    {(r.commands ?? []).map((c) => `/${c.name}`).join(', ') || 'none'}
+                  </Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Skills</Table.Td>
+                  <Table.Td>{(r.skills ?? []).map((s) => s.name).join(', ') || 'none'}</Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Prompts</Table.Td>
+                  <Table.Td>
+                    {(r.prompts ?? []).map((p) => `/${p.name}`).join(', ') || 'none'}
+                  </Table.Td>
+                </Table.Tr>
+                <Table.Tr>
+                  <Table.Td c="dimmed">Themes</Table.Td>
+                  <Table.Td>{(r.themes ?? []).map((t) => t.name).join(', ') || 'none'}</Table.Td>
+                </Table.Tr>
+              </Table.Tbody>
+            </Table>
+
+            {(r.tests ?? []).length > 0 && (
+              <Table striped highlightOnHover verticalSpacing="xs">
+                <Table.Thead>
+                  <Table.Tr>
+                    <Table.Th>Test</Table.Th>
+                    <Table.Th>Result</Table.Th>
+                    <Table.Th>Detail</Table.Th>
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {(r.tests ?? []).map((t, i) => (
+                    <Table.Tr key={i}>
+                      <Table.Td>
+                        <Text span c={t.ok ? 'green' : 'red'} fw={700}>
+                          {t.ok ? '✓' : '✗'}
+                        </Text>{' '}
+                        <Code>{t.tool}</Code>
+                      </Table.Td>
+                      <Table.Td>{t.status}</Table.Td>
+                      <Table.Td style={{ whiteSpace: 'pre-wrap', ...mono }}>
+                        {t.schemaErrors.length > 0
+                          ? t.schemaErrors.join('\n')
+                          : (t.error ?? t.output)}
+                      </Table.Td>
+                    </Table.Tr>
                   ))}
-            </dd>
-            <dt>Commands</dt>
-            <dd>{(r.commands ?? []).map((c) => `/${c.name}`).join(', ') || 'none'}</dd>
-            <dt>Skills</dt>
-            <dd>{(r.skills ?? []).map((s) => s.name).join(', ') || 'none'}</dd>
-            <dt>Prompts</dt>
-            <dd>{(r.prompts ?? []).map((p) => `/${p.name}`).join(', ') || 'none'}</dd>
-            <dt>Themes</dt>
-            <dd>{(r.themes ?? []).map((t) => t.name).join(', ') || 'none'}</dd>
-          </dl>
-          {(r.tests ?? []).length > 0 && (
-            <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-              <thead>
-                <tr>
-                  <th align="left">Test</th>
-                  <th align="left">Result</th>
-                  <th align="left">Detail</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(r.tests ?? []).map((t, i) => (
-                  <tr key={i}>
-                    <td>
-                      {t.ok ? '✓' : '✗'} <code>{t.tool}</code>
-                    </td>
-                    <td>{t.status}</td>
-                    <td style={{ whiteSpace: 'pre-wrap', ...mono }}>
-                      {t.schemaErrors.length > 0
-                        ? t.schemaErrors.join('\n')
-                        : (t.error ?? t.output)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
-      {result.run.stderr && (
-        <details>
-          <summary>stderr</summary>
-          <pre style={{ ...mono, whiteSpace: 'pre-wrap' }}>{result.run.stderr}</pre>
-        </details>
-      )}
-    </div>
+                </Table.Tbody>
+              </Table>
+            )}
+          </>
+        )}
+
+        {result.run.stderr && (
+          <Collapsible defaultOpen={false} title="stderr">
+            <Code block style={{ ...mono, whiteSpace: 'pre-wrap' }}>
+              {result.run.stderr}
+            </Code>
+          </Collapsible>
+        )}
+      </Stack>
+    </Paper>
   );
 }
 
@@ -174,7 +253,7 @@ export function Lab({ projectId }: { projectId: number }) {
   const [selected, setSelected] = useState('');
   const [rows, setRows] = useState<TestRow[]>([]);
   const [name, setName] = useState('');
-  const [kinds, setKinds] = useState<Set<LabKind>>(new Set(['extension']));
+  const [kinds, setKinds] = useState<string[]>(['extension']);
   const [result, setResult] = useState<LabRun | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState('');
@@ -195,7 +274,7 @@ export function Lab({ projectId }: { projectId: number }) {
     e.preventDefault();
     setError('');
     try {
-      const created = await scaffoldLabPackage(projectId, name.trim(), [...kinds]);
+      const created = await scaffoldLabPackage(projectId, name.trim(), kinds as LabKind[]);
       setName('');
       setResult(null);
       setRows(created.sampleTests.map(rowFrom));
@@ -225,116 +304,113 @@ export function Lab({ projectId }: { projectId: number }) {
   const toolNames = (result?.report?.tools ?? []).map((t) => t.name);
 
   return (
-    <details style={{ margin: '12px 0' }} open>
-      <summary>Package lab</summary>
-      <p style={{ margin: '8px 0' }}>
-        Build and test extensions, skills, prompts and themes. Runs use a throwaway container with
-        no network and no credentials. Results are advisory: the package&apos;s own code runs there
-        and could influence the report.
-      </p>
-      <form
-        onSubmit={create}
-        style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}
-      >
-        <input
-          placeholder="new-package-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        {KINDS.map((k) => (
-          <label key={k}>
-            <input
-              type="checkbox"
-              checked={kinds.has(k)}
-              onChange={(e) => {
-                const next = new Set(kinds);
-                if (e.target.checked) next.add(k);
-                else next.delete(k);
-                setKinds(next);
-              }}
-            />{' '}
-            {k}
-          </label>
-        ))}
-        <button disabled={!name.trim() || kinds.size === 0}>Create starter package</button>
-      </form>
+    <Collapsible title="Package lab">
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          Build and test extensions, skills, prompts and themes. Runs use a throwaway container with
+          no network and no credentials. Results are advisory: the package&apos;s own code runs
+          there and could influence the report.
+        </Text>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '12px 0' }}>
-        <select aria-label="Package" value={selected} onChange={(e) => setSelected(e.target.value)}>
-          {packages.length === 0 && <option value="">No packages found</option>}
-          {packages.map((p) => (
-            <option key={p.path} value={p.path}>
-              {p.path}
-              {p.name ? ` (${p.name})` : ''}
-            </option>
-          ))}
-        </select>
-        <button onClick={() => void refresh().catch((e: Error) => setError(e.message))}>
-          Rescan
-        </button>
-      </div>
+        <form onSubmit={create}>
+          <Group gap="xs" align="flex-end">
+            <TextInput
+              placeholder="new-package-name"
+              aria-label="New package name"
+              value={name}
+              onChange={(e) => setName(e.currentTarget.value)}
+            />
+            <Checkbox.Group value={kinds} onChange={setKinds}>
+              <Group gap="xs">
+                {KINDS.map((k) => (
+                  <Checkbox key={k} value={k} label={k} />
+                ))}
+              </Group>
+            </Checkbox.Group>
+            <Button type="submit" disabled={!name.trim() || kinds.length === 0}>
+              Create starter package
+            </Button>
+          </Group>
+        </form>
 
-      {selected && (
-        <>
-          <datalist id="lab-tools">
-            {toolNames.map((n) => (
-              <option key={n} value={n} />
-            ))}
-          </datalist>
-          <div style={{ display: 'grid', gap: 8 }}>
+        <Group gap="xs" align="flex-end">
+          <Select
+            aria-label="Package"
+            placeholder={packages.length === 0 ? 'No packages found' : 'Choose a package'}
+            w={380}
+            value={selected || null}
+            data={packages.map((p) => ({
+              value: p.path,
+              label: `${p.path}${p.name ? ` (${p.name})` : ''}`,
+            }))}
+            onChange={(v) => setSelected(v ?? '')}
+          />
+          <Button
+            variant="default"
+            onClick={() => void refresh().catch((e: Error) => setError(e.message))}
+          >
+            Rescan
+          </Button>
+        </Group>
+
+        {selected && (
+          <Stack gap="xs">
             {rows.map((r, i) => (
-              <div
-                key={i}
-                style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}
-              >
-                <input
-                  list="lab-tools"
+              <Group key={i} gap="xs" align="flex-start" wrap="wrap">
+                <Autocomplete
                   placeholder="tool name"
                   aria-label={`Test ${i + 1} tool`}
+                  data={toolNames}
                   value={r.tool}
-                  onChange={(e) => update(i, { tool: e.target.value })}
+                  onChange={(v) => update(i, { tool: v })}
+                  w={180}
                 />
-                <textarea
+                <Textarea
                   rows={2}
                   aria-label={`Test ${i + 1} input`}
                   value={r.input}
-                  onChange={(e) => update(i, { input: e.target.value })}
-                  style={{ ...mono, minWidth: 240 }}
+                  onChange={(e) => update(i, { input: e.currentTarget.value })}
+                  styles={{ input: mono }}
+                  w={300}
                 />
-                <input
+                <TextInput
                   placeholder="output contains (optional)"
                   aria-label={`Test ${i + 1} expected output`}
                   value={r.expectContains}
-                  onChange={(e) => update(i, { expectContains: e.target.value })}
+                  onChange={(e) => update(i, { expectContains: e.currentTarget.value })}
+                  w={220}
                 />
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={r.expectError}
-                    onChange={(e) => update(i, { expectError: e.target.checked })}
-                  />{' '}
-                  expect error
-                </label>
-                <button onClick={() => setRows((cur) => cur.filter((_, j) => j !== i))}>
+                <Checkbox
+                  mt={8}
+                  label="expect error"
+                  checked={r.expectError}
+                  onChange={(e) => update(i, { expectError: e.currentTarget.checked })}
+                />
+                <Button
+                  variant="subtle"
+                  color="red"
+                  size="xs"
+                  mt={4}
+                  onClick={() => setRows((cur) => cur.filter((_, j) => j !== i))}
+                >
                   Remove
-                </button>
-              </div>
+                </Button>
+              </Group>
             ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8, margin: '8px 0' }}>
-            <button onClick={() => setRows((cur) => [...cur, emptyRow()])}>Add tool test</button>
-            <button disabled={running} onClick={() => void run()}>
-              {running ? 'Running in a throwaway container...' : 'Run in lab'}
-            </button>
-          </div>
-        </>
-      )}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-      {result && <Results result={result} />}
-    </details>
+            <Group gap="xs">
+              <Button variant="light" onClick={() => setRows((cur) => [...cur, emptyRow()])}>
+                Add tool test
+              </Button>
+              <Button loading={running} onClick={() => void run()}>
+                {running ? 'Running in a throwaway container...' : 'Run in lab'}
+              </Button>
+            </Group>
+          </Stack>
+        )}
+
+        <ErrorText error={error} />
+        {result && <Results result={result} />}
+      </Stack>
+    </Collapsible>
   );
 }

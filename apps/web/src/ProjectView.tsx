@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { ActionIcon, Button, Group, Select, Stack, Title } from '@mantine/core';
+import { IconArrowLeft, IconX } from '@tabler/icons-react';
 import {
   createSession,
   deleteSession,
@@ -13,6 +15,7 @@ import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { ProjectMcp } from './ProjectMcp.js';
 import { SessionView } from './SessionView.js';
+import { ErrorText } from './ui.js';
 
 export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -58,48 +61,57 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
     }
   }
 
+  const modelOptions = providers.flatMap((p) =>
+    p.models.map((m) => ({ value: `${p.id}:${m}`, label: `${p.name} / ${m}` })),
+  );
+
   return (
-    <section>
-      <button onClick={onBack}>&larr; Projects</button>
-      <h2>{project.name}</h2>
+    <Stack>
+      <Group>
+        <Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={onBack}>
+          Projects
+        </Button>
+      </Group>
+      <Title order={2}>{project.name}</Title>
       <GitHubPanel projectId={project.id} />
       <ProjectMcp projectId={project.id} />
       <Packages projectId={project.id} />
       <Lab projectId={project.id} />
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+      <ErrorText error={error} />
+
+      <Group gap="xs" wrap="wrap" align="center">
         {sessions.map((s) => (
-          <span key={s.id}>
-            <button
-              onClick={() => setSelected(s.id)}
+          <Group key={s.id} gap={4} wrap="nowrap">
+            <Button
+              variant={selected === s.id ? 'filled' : 'light'}
               aria-pressed={selected === s.id}
-              style={{ fontWeight: selected === s.id ? 700 : 400 }}
+              onClick={() => setSelected(s.id)}
             >
               {s.name}
               {s.modelId ? ` (${s.modelId})` : ''}
-            </button>
-            <button aria-label={`Delete ${s.name}`} onClick={() => void remove(s)}>
-              &times;
-            </button>
-          </span>
+            </Button>
+            <ActionIcon
+              variant="subtle"
+              color="red"
+              aria-label={`Delete ${s.name}`}
+              onClick={() => void remove(s)}
+            >
+              <IconX size={16} />
+            </ActionIcon>
+          </Group>
         ))}
-        <select aria-label="Model" value={choice} onChange={(e) => setChoice(e.target.value)}>
-          <option value="">No model (pi default)</option>
-          {providers.flatMap((p) =>
-            p.models.map((m) => (
-              <option key={`${p.id}:${m}`} value={`${p.id}:${m}`}>
-                {p.name} / {m}
-              </option>
-            )),
-          )}
-        </select>
-        <button onClick={() => void add()}>New session</button>
-      </div>
+        <Select
+          aria-label="Model"
+          placeholder="No model (pi default)"
+          w={260}
+          value={choice || null}
+          data={modelOptions}
+          onChange={(v) => setChoice(v ?? '')}
+        />
+        <Button onClick={() => void add()}>New session</Button>
+      </Group>
+
       {selected !== null && <SessionView key={selected} sessionId={selected} />}
-    </section>
+    </Stack>
   );
 }

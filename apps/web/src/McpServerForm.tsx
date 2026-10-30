@@ -1,5 +1,18 @@
 import { useState, type FormEvent } from 'react';
 import {
+  Button,
+  Checkbox,
+  Fieldset,
+  Group,
+  NumberInput,
+  PasswordInput,
+  Select,
+  Stack,
+  TextInput,
+  Text,
+  Textarea,
+} from '@mantine/core';
+import {
   createMcpServer,
   updateMcpServer,
   type McpEntry,
@@ -8,6 +21,7 @@ import {
   type McpServer,
   type McpServerInput,
 } from './api.js';
+import { ErrorText, mono } from './ui.js';
 
 interface Row {
   key: string;
@@ -59,46 +73,64 @@ function Rows({
   const update = (i: number, patch: Partial<Row>) =>
     onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   return (
-    <fieldset style={{ border: '1px solid #8886', borderRadius: 6 }}>
-      <legend>{label}</legend>
-      {rows.map((r, i) => (
-        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-          <input
-            placeholder={keyPlaceholder}
-            aria-label={`${label} name ${i + 1}`}
-            value={r.key}
-            onChange={(e) => update(i, { key: e.target.value })}
-          />
-          <input
-            type={r.secret ? 'password' : 'text'}
-            autoComplete="off"
-            placeholder={r.stored ? '(stored: leave blank to keep)' : 'value'}
-            aria-label={`${label} value ${i + 1}`}
-            value={r.value}
-            onChange={(e) => update(i, { value: e.target.value })}
-          />
-          <label>
-            <input
-              type="checkbox"
+    <Fieldset legend={label} radius="md">
+      <Stack gap="xs">
+        {rows.map((r, i) => (
+          <Group key={i} gap="xs" align="flex-end" wrap="wrap">
+            <TextInput
+              placeholder={keyPlaceholder}
+              aria-label={`${label} name ${i + 1}`}
+              value={r.key}
+              onChange={(e) => update(i, { key: e.currentTarget.value })}
+            />
+            {r.secret ? (
+              <PasswordInput
+                autoComplete="off"
+                placeholder={r.stored ? '(stored: leave blank to keep)' : 'value'}
+                aria-label={`${label} value ${i + 1}`}
+                value={r.value}
+                onChange={(e) => update(i, { value: e.currentTarget.value })}
+              />
+            ) : (
+              <TextInput
+                placeholder={r.stored ? '(stored: leave blank to keep)' : 'value'}
+                aria-label={`${label} value ${i + 1}`}
+                value={r.value}
+                onChange={(e) => update(i, { value: e.currentTarget.value })}
+              />
+            )}
+            <Checkbox
+              label="secret"
               checked={r.secret}
-              onChange={(e) => update(i, { secret: e.target.checked, stored: false })}
-            />{' '}
-            secret
-          </label>
-          <button type="button" onClick={() => onChange(rows.filter((_, j) => j !== i))}>
-            Remove
-          </button>
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...rows, { key: '', value: '', secret: false, stored: false }])}
-      >
-        Add
-      </button>
-    </fieldset>
+              onChange={(e) => update(i, { secret: e.currentTarget.checked, stored: false })}
+            />
+            <Button
+              variant="subtle"
+              color="red"
+              size="xs"
+              onClick={() => onChange(rows.filter((_, j) => j !== i))}
+            >
+              Remove
+            </Button>
+          </Group>
+        ))}
+        <Group>
+          <Button
+            variant="default"
+            size="xs"
+            onClick={() =>
+              onChange([...rows, { key: '', value: '', secret: false, stored: false }])
+            }
+          >
+            Add
+          </Button>
+        </Group>
+      </Stack>
+    </Fieldset>
   );
 }
+
+const EXPOSURE_DEFAULT = 'default';
 
 export function McpServerForm({
   initial,
@@ -171,170 +203,165 @@ export function McpServerForm({
   }
 
   return (
-    <form onSubmit={submit} style={{ display: 'grid', gap: 8, maxWidth: 560, margin: '12px 0' }}>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <input
-          placeholder="Name (letters, digits, - and _)"
-          value={name}
-          disabled={!!initial}
-          onChange={(e) => setName(e.target.value)}
+    <form onSubmit={submit}>
+      <Stack gap="sm" maw={560} my="xs">
+        <Group gap="xs" grow wrap="nowrap">
+          <TextInput
+            placeholder="Name (letters, digits, - and _)"
+            aria-label="Server name"
+            value={name}
+            disabled={!!initial}
+            onChange={(e) => setName(e.currentTarget.value)}
+          />
+          <Select
+            aria-label="Server type"
+            allowDeselect={false}
+            value={type}
+            disabled={!!initial}
+            data={[
+              { value: 'stdio', label: 'Command (runs in the project container)' },
+              { value: 'http', label: 'URL (streamable HTTP)' },
+              { value: 'managed', label: 'Managed container (isolated, HTTP)' },
+            ]}
+            onChange={(v) => v && setType(v as Kind)}
+          />
+        </Group>
+        <TextInput
+          placeholder="Description (optional)"
+          value={description}
+          onChange={(e) => setDescription(e.currentTarget.value)}
         />
-        <select
-          aria-label="Server type"
-          value={type}
-          disabled={!!initial}
-          onChange={(e) => setType(e.target.value as Kind)}
-        >
-          <option value="stdio">Command (runs in the project container)</option>
-          <option value="http">URL (streamable HTTP)</option>
-          <option value="managed">Managed container (isolated, HTTP)</option>
-        </select>
-      </div>
-      <input
-        placeholder="Description (optional)"
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-      />
-      {type === 'managed' && (
-        <>
-          <p style={{ margin: 0, fontSize: 13 }}>
-            Runs in its own container on a private network with no internet. The agent can call its
-            tools but never sees its environment variables or files. The server must speak
-            streamable HTTP at <code>/mcp</code>, and the image must already exist on this machine.
-          </p>
-          <input
-            placeholder="Image, e.g. pi-panel/rea:6.8.0"
-            value={image}
-            onChange={(e) => setImage(e.target.value)}
-          />
-        </>
-      )}
-      {type === 'stdio' || type === 'managed' ? (
-        <>
-          <input
-            placeholder={
-              type === 'managed' ? 'Command inside the container, e.g. rea' : 'Command, e.g. npx'
-            }
-            value={command}
-            onChange={(e) => setCommand(e.target.value)}
-          />
-          <textarea
-            rows={3}
-            placeholder={'Arguments, one per line\n-y\n@scope/server@1.2.3'}
-            value={args}
-            onChange={(e) => setArgs(e.target.value)}
-            style={{ fontFamily: 'ui-monospace, monospace' }}
-          />
-          {type === 'stdio' && (
-            <input
-              placeholder="Working directory (optional)"
-              value={cwd}
-              onChange={(e) => setCwd(e.target.value)}
+
+        {type === 'managed' && (
+          <>
+            <Text size="sm">
+              Runs in its own container on a private network with no internet. The agent can call
+              its tools but never sees its environment variables or files. The server must speak
+              streamable HTTP at <code>/mcp</code>, and the image must already exist on this
+              machine.
+            </Text>
+            <TextInput
+              placeholder="Image, e.g. pi-panel/rea:6.8.0"
+              value={image}
+              onChange={(e) => setImage(e.currentTarget.value)}
             />
-          )}
-          {type === 'managed' && (
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <label>
-                Port{' '}
-                <input
-                  type="number"
+          </>
+        )}
+
+        {type === 'stdio' || type === 'managed' ? (
+          <>
+            <TextInput
+              placeholder={
+                type === 'managed' ? 'Command inside the container, e.g. rea' : 'Command, e.g. npx'
+              }
+              value={command}
+              onChange={(e) => setCommand(e.currentTarget.value)}
+            />
+            <Textarea
+              rows={3}
+              placeholder={'Arguments, one per line\n-y\n@scope/server@1.2.3'}
+              value={args}
+              onChange={(e) => setArgs(e.currentTarget.value)}
+              styles={{ input: mono }}
+            />
+            {type === 'stdio' && (
+              <TextInput
+                placeholder="Working directory (optional)"
+                value={cwd}
+                onChange={(e) => setCwd(e.currentTarget.value)}
+              />
+            )}
+            {type === 'managed' && (
+              <Group gap="md" wrap="wrap" align="flex-end">
+                <NumberInput
+                  label="Port"
                   min={1}
                   max={65535}
-                  style={{ width: 80 }}
+                  w={110}
                   value={port}
-                  onChange={(e) => setPort(e.target.value)}
+                  onChange={(v) => setPort(String(v))}
                 />
-              </label>
-              <label>
-                Memory (MB){' '}
-                <input
-                  type="number"
+                <NumberInput
+                  label="Memory (MB)"
                   min={256}
                   max={32768}
-                  style={{ width: 90 }}
+                  w={130}
                   value={memoryMb}
-                  onChange={(e) => setMemoryMb(e.target.value)}
+                  onChange={(v) => setMemoryMb(String(v))}
                 />
-              </label>
-              <label>
-                Ready when logs contain{' '}
-                <input
+                <TextInput
+                  label="Ready when logs contain"
                   value={readyLog}
                   placeholder="MCP transport listening"
-                  onChange={(e) => setReadyLog(e.target.value)}
+                  onChange={(e) => setReadyLog(e.currentTarget.value)}
                 />
-              </label>
-              <label>
-                <input
-                  type="checkbox"
+                <Checkbox
+                  label="Mount uploaded files at /samples (read-only)"
                   checked={mountSamples}
-                  onChange={(e) => setMountSamples(e.target.checked)}
-                />{' '}
-                mount uploaded files at /samples (read-only)
-              </label>
-            </div>
-          )}
-          <Rows
-            label={type === 'managed' ? 'Container environment (never sent to pi)' : 'Environment'}
-            rows={env}
-            onChange={setEnv}
-            keyPlaceholder="NAME"
+                  onChange={(e) => setMountSamples(e.currentTarget.checked)}
+                />
+              </Group>
+            )}
+            <Rows
+              label={
+                type === 'managed' ? 'Container environment (never sent to pi)' : 'Environment'
+              }
+              rows={env}
+              onChange={setEnv}
+              keyPlaceholder="NAME"
+            />
+          </>
+        ) : (
+          <>
+            <TextInput
+              placeholder="https://host/mcp  (a host service: http://host.docker.internal:PORT/mcp)"
+              value={url}
+              onChange={(e) => setUrl(e.currentTarget.value)}
+            />
+            <Rows
+              label="Headers"
+              rows={headers}
+              onChange={setHeaders}
+              keyPlaceholder="Authorization"
+            />
+          </>
+        )}
+
+        <Group gap="md" wrap="wrap" align="flex-end">
+          <Select
+            label="Exposure"
+            allowDeselect={false}
+            w={320}
+            value={exposure || EXPOSURE_DEFAULT}
+            data={[
+              { value: EXPOSURE_DEFAULT, label: 'pi default (codemode)' },
+              { value: 'direct', label: 'direct: always shown to the model' },
+              { value: 'deferred', label: 'deferred: found via tool search' },
+              { value: 'codemode', label: 'codemode: called from scripts' },
+              { value: 'hidden', label: 'hidden' },
+            ]}
+            onChange={(v) => setExposure(v === EXPOSURE_DEFAULT || !v ? '' : (v as McpExposure))}
           />
-        </>
-      ) : (
-        <>
-          <input
-            placeholder="https://host/mcp  (a host service: http://host.docker.internal:PORT/mcp)"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          <Rows
-            label="Headers"
-            rows={headers}
-            onChange={setHeaders}
-            keyPlaceholder="Authorization"
-          />
-        </>
-      )}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-        <label>
-          Exposure{' '}
-          <select
-            value={exposure}
-            onChange={(e) => setExposure(e.target.value as McpExposure | '')}
-          >
-            <option value="">pi default (codemode)</option>
-            <option value="direct">direct: always shown to the model</option>
-            <option value="deferred">deferred: found via tool search</option>
-            <option value="codemode">codemode: called from scripts</option>
-            <option value="hidden">hidden</option>
-          </select>
-        </label>
-        <label>
-          Timeout (s){' '}
-          <input
-            type="number"
+          <NumberInput
+            label="Timeout (s)"
             min={1}
             max={600}
-            style={{ width: 80 }}
+            w={110}
             value={timeout}
-            onChange={(e) => setTimeoutSecs(e.target.value)}
+            onChange={(v) => setTimeoutSecs(String(v))}
           />
-        </label>
-      </div>
-      {error && (
-        <p role="alert" style={{ color: 'crimson', margin: 0 }}>
-          {error}
-        </p>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button disabled={busy || (!initial && !name.trim())}>
-          {initial ? 'Save' : 'Add server'}
-        </button>
-        <button type="button" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
+        </Group>
+
+        <ErrorText error={error} />
+        <Group gap="xs">
+          <Button type="submit" disabled={busy || (!initial && !name.trim())}>
+            {initial ? 'Save' : 'Add server'}
+          </Button>
+          <Button type="button" variant="default" onClick={onCancel}>
+            Cancel
+          </Button>
+        </Group>
+      </Stack>
     </form>
   );
 }

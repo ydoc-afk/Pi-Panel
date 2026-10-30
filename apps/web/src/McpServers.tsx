@@ -1,5 +1,16 @@
 import { useEffect, useState } from 'react';
 import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+  Title,
+} from '@mantine/core';
+import {
   deleteMcpServer,
   discoverMcp,
   importMcp,
@@ -12,6 +23,7 @@ import {
 } from './api.js';
 import { McpServerForm } from './McpServerForm.js';
 import { McpToolList } from './McpToolList.js';
+import { Collapsible, ErrorText, mono } from './ui.js';
 
 type Mode =
   | { kind: 'none' }
@@ -20,16 +32,30 @@ type Mode =
   | { kind: 'edit'; id: number };
 
 function StateBadge({ server, testing }: { server: McpServer; testing: boolean }) {
-  if (testing) return <span>testing&hellip;</span>;
+  if (testing)
+    return (
+      <Badge variant="light" color="gray">
+        testing&hellip;
+      </Badge>
+    );
   const d = server.discovery;
-  if (!d) return <span style={{ opacity: 0.7 }}>not tested</span>;
+  if (!d)
+    return (
+      <Badge variant="light" color="gray">
+        not tested
+      </Badge>
+    );
   if (d.state === 'connected')
     return (
-      <span style={{ color: 'seagreen' }}>
+      <Badge variant="light" color="green">
         connected, {d.tools.length} tool{d.tools.length === 1 ? '' : 's'}
-      </span>
+      </Badge>
     );
-  return <span style={{ color: 'crimson' }}>{d.state}</span>;
+  return (
+    <Badge variant="light" color="red">
+      {d.state}
+    </Badge>
+  );
 }
 
 export function McpServers() {
@@ -87,96 +113,106 @@ export function McpServers() {
       await refresh();
     });
 
+  const presetNotes = (preset: McpServerInput & { name: string }) =>
+    presets.find((p) => p.server === preset)?.notes ?? [];
+
   return (
-    <section>
-      <h2>MCP servers</h2>
-      <p style={{ maxWidth: 640 }}>
+    <Stack>
+      <Title order={2}>MCP servers</Title>
+      <Text size="sm" c="dimmed" maw={640}>
         Add servers here once, then switch them on per project. Command servers run inside the
         project container with the agent&apos;s permissions, and any secrets you give them are
         visible to the agent. Remote URL servers keep their own credentials.
-      </p>
+      </Text>
 
       {mode.kind === 'none' && (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '12px 0' }}>
-          <strong>Add:</strong>
+        <Group gap="xs">
+          <Text fw={600} size="sm">
+            Add:
+          </Text>
           {presets.map((p) => (
-            <button
+            <Button
               key={p.id}
+              size="xs"
+              variant="light"
               title={p.description}
               onClick={() => setMode({ kind: 'form', preset: p.server })}
             >
               {p.title}
-            </button>
+            </Button>
           ))}
-          <button onClick={() => setMode({ kind: 'form' })}>Custom&hellip;</button>
-          <button onClick={() => setMode({ kind: 'import' })}>Paste JSON&hellip;</button>
-        </div>
+          <Button size="xs" variant="default" onClick={() => setMode({ kind: 'form' })}>
+            Custom&hellip;
+          </Button>
+          <Button size="xs" variant="default" onClick={() => setMode({ kind: 'import' })}>
+            Paste JSON&hellip;
+          </Button>
+        </Group>
       )}
 
       {mode.kind === 'form' && (
-        <>
-          {mode.preset && presets.find((p) => p.server === mode.preset) && (
-            <ul style={{ color: 'darkorange', maxWidth: 560 }}>
-              {presets
-                .find((p) => p.server === mode.preset)!
-                .notes.map((n) => (
-                  <li key={n}>{n}</li>
-                ))}
-            </ul>
-          )}
+        <Stack gap="xs">
+          {mode.preset &&
+            presetNotes(mode.preset).map((n) => (
+              <Text key={n} size="sm" c="orange">
+                {n}
+              </Text>
+            ))}
           <McpServerForm
             preset={mode.preset}
             onSaved={saved}
             onCancel={() => setMode({ kind: 'none' })}
           />
-        </>
+        </Stack>
       )}
 
       {mode.kind === 'import' && (
-        <div style={{ display: 'grid', gap: 8, maxWidth: 560, margin: '12px 0' }}>
-          <p style={{ margin: 0 }}>
-            Paste an <code>mcpServers</code> config from Claude Desktop, Cursor and similar, or a
-            single server. Values that look like secrets, or that reference environment variables,
-            are added as empty secrets for you to fill in.
-          </p>
-          <textarea
-            rows={8}
-            value={importText}
-            onChange={(e) => setImportText(e.target.value)}
-            placeholder='{ "mcpServers": { ... } }'
-            style={{ fontFamily: 'ui-monospace, monospace' }}
-          />
-          <input
-            placeholder="Name (only needed when pasting a single server)"
-            value={importName}
-            onChange={(e) => setImportName(e.target.value)}
-          />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button disabled={!importText.trim()} onClick={() => void doImport()}>
-              Import
-            </button>
-            <button onClick={() => setMode({ kind: 'none' })}>Cancel</button>
-          </div>
-        </div>
+        <Paper withBorder p="md" radius="md" maw={560}>
+          <Stack gap="sm">
+            <Text size="sm">
+              Paste an <code>mcpServers</code> config from Claude Desktop, Cursor and similar, or a
+              single server. Values that look like secrets, or that reference environment variables,
+              are added as empty secrets for you to fill in.
+            </Text>
+            <Textarea
+              rows={8}
+              value={importText}
+              onChange={(e) => setImportText(e.currentTarget.value)}
+              placeholder='{ "mcpServers": { ... } }'
+              styles={{ input: mono }}
+            />
+            <TextInput
+              placeholder="Name (only needed when pasting a single server)"
+              value={importName}
+              onChange={(e) => setImportName(e.currentTarget.value)}
+            />
+            <Group gap="xs">
+              <Button disabled={!importText.trim()} onClick={() => void doImport()}>
+                Import
+              </Button>
+              <Button variant="default" onClick={() => setMode({ kind: 'none' })}>
+                Cancel
+              </Button>
+            </Group>
+          </Stack>
+        </Paper>
       )}
 
-      {notice && <p>{notice}</p>}
+      {notice && <Text size="sm">{notice}</Text>}
       {warnings.length > 0 && (
-        <ul style={{ color: 'darkorange' }}>
+        <Stack gap={2}>
           {warnings.map((w) => (
-            <li key={w}>{w}</li>
+            <Text key={w} size="sm" c="orange">
+              {w}
+            </Text>
           ))}
-        </ul>
+        </Stack>
       )}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
+      <ErrorText error={error} />
 
-      <ul style={{ paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 14 }}>
+      <Stack gap="sm">
         {servers.map((s) => (
-          <li key={s.id}>
+          <Paper key={s.id} withBorder p="md" radius="md">
             {mode.kind === 'edit' && mode.id === s.id ? (
               <McpServerForm
                 initial={s}
@@ -184,35 +220,41 @@ export function McpServers() {
                 onCancel={() => setMode({ kind: 'none' })}
               />
             ) : (
-              <div>
-                <strong>{s.name}</strong>{' '}
-                <small>
-                  (
-                  {s.type === 'stdio'
-                    ? 'command'
-                    : s.type === 'managed'
-                      ? 'managed container'
-                      : 'URL'}
-                  )
-                </small>{' '}
-                &middot; <StateBadge server={s} testing={testing === s.id} />
-                {s.description && <div>{s.description}</div>}
-                <div>
-                  <code>
-                    {s.type === 'http'
-                      ? s.url
+              <Stack gap={4}>
+                <Group gap="xs" wrap="wrap">
+                  <Text fw={600}>{s.name}</Text>
+                  <Text size="sm" c="dimmed">
+                    (
+                    {s.type === 'stdio'
+                      ? 'command'
                       : s.type === 'managed'
-                        ? `${s.image}: ${[s.command, ...s.args].join(' ')}`
-                        : [s.command, ...s.args].join(' ')}
-                  </code>
-                </div>
-                {s.discovery?.error && (
-                  <div style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>
-                    {s.discovery.error}
-                  </div>
+                        ? 'managed container'
+                        : 'URL'}
+                    )
+                  </Text>
+                  <StateBadge server={s} testing={testing === s.id} />
+                </Group>
+                {s.description && (
+                  <Text size="sm" c="dimmed">
+                    {s.description}
+                  </Text>
                 )}
-                <div style={{ display: 'flex', gap: 8, margin: '4px 0' }}>
-                  <button
+                <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
+                  {s.type === 'http'
+                    ? s.url
+                    : s.type === 'managed'
+                      ? `${s.image}: ${[s.command, ...s.args].join(' ')}`
+                      : [s.command, ...s.args].join(' ')}
+                </Text>
+                {s.discovery?.error && (
+                  <Text size="sm" c="red" style={{ whiteSpace: 'pre-wrap' }}>
+                    {s.discovery.error}
+                  </Text>
+                )}
+                <Group gap="xs" mt={4}>
+                  <Button
+                    size="xs"
+                    variant="light"
                     disabled={testing !== null}
                     onClick={() =>
                       void act(async () => {
@@ -227,9 +269,18 @@ export function McpServers() {
                     }
                   >
                     Test connection
-                  </button>
-                  <button onClick={() => setMode({ kind: 'edit', id: s.id })}>Edit</button>
-                  <button
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    onClick={() => setMode({ kind: 'edit', id: s.id })}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
                     onClick={() => {
                       if (confirm(`Delete "${s.name}" from the library and from every project?`)) {
                         void act(async () => {
@@ -240,15 +291,15 @@ export function McpServers() {
                     }}
                   >
                     Delete
-                  </button>
-                </div>
+                  </Button>
+                </Group>
                 {s.discovery && s.discovery.tools.length > 0 && (
-                  <details>
-                    <summary>
-                      Tools shown to the model by default (
-                      {s.discovery.tools.length - s.defaultHidden.length} of{' '}
-                      {s.discovery.tools.length})
-                    </summary>
+                  <Collapsible
+                    defaultOpen={false}
+                    title={`Tools shown to the model by default (${
+                      s.discovery.tools.length - s.defaultHidden.length
+                    } of ${s.discovery.tools.length})`}
+                  >
                     <McpToolList
                       tools={s.discovery.tools}
                       hidden={s.defaultHidden}
@@ -263,16 +314,16 @@ export function McpServers() {
                         });
                       }}
                     />
-                  </details>
+                  </Collapsible>
                 )}
-              </div>
+              </Stack>
             )}
-          </li>
+          </Paper>
         ))}
         {servers.length === 0 && mode.kind === 'none' && (
-          <li>No servers yet. Pick a starter above, or add your own.</li>
+          <Text c="dimmed">No servers yet. Pick a starter above, or add your own.</Text>
         )}
-      </ul>
-    </section>
+      </Stack>
+    </Stack>
   );
 }

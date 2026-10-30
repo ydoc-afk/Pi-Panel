@@ -1,5 +1,7 @@
 import { useState, type FormEvent } from 'react';
+import { Button, Card, PasswordInput, Stack, TextInput, Title } from '@mantine/core';
 import { login, setupAdmin, type User } from './api.js';
+import { ErrorText } from './ui.js';
 
 export function AuthForm({ setup, onAuthed }: { setup: boolean; onAuthed: (u: User) => void }) {
   const [username, setUsername] = useState('');
@@ -22,27 +24,29 @@ export function AuthForm({ setup, onAuthed }: { setup: boolean; onAuthed: (u: Us
   }
 
   return (
-    <form onSubmit={submit} style={{ display: 'grid', gap: 12, maxWidth: 320 }}>
-      <h2>{setup ? 'Create admin account' : 'Sign in'}</h2>
-      <input
-        placeholder="Username"
-        autoComplete="username"
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-      />
-      <input
-        type="password"
-        placeholder={setup ? 'Password (12+ characters)' : 'Password'}
-        autoComplete={setup ? 'new-password' : 'current-password'}
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-      />
-      {error && (
-        <p role="alert" style={{ color: 'crimson', margin: 0 }}>
-          {error}
-        </p>
-      )}
-      <button disabled={busy}>{setup ? 'Create account' : 'Sign in'}</button>
-    </form>
+    <Card withBorder padding="xl" radius="md">
+      <form onSubmit={submit}>
+        <Stack>
+          <Title order={3}>{setup ? 'Create admin account' : 'Sign in'}</Title>
+          <TextInput
+            label="Username"
+            autoComplete="username"
+            value={username}
+            onChange={(e) => setUsername(e.currentTarget.value)}
+          />
+          <PasswordInput
+            label="Password"
+            description={setup ? '12 or more characters' : undefined}
+            autoComplete={setup ? 'new-password' : 'current-password'}
+            value={password}
+            onChange={(e) => setPassword(e.currentTarget.value)}
+          />
+          <ErrorText error={error} />
+          <Button type="submit" loading={busy}>
+            {setup ? 'Create account' : 'Sign in'}
+          </Button>
+        </Stack>
+      </form>
+    </Card>
   );
 }

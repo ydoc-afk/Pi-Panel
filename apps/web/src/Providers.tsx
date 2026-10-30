@@ -1,5 +1,16 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import {
+  Button,
+  Group,
+  Paper,
+  PasswordInput,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
+import {
   createProvider,
   deleteProvider,
   discoverModels,
@@ -8,6 +19,7 @@ import {
   type Provider,
   type ProviderKind,
 } from './api.js';
+import { ErrorText } from './ui.js';
 
 const KIND_LABEL: Record<ProviderKind, string> = {
   'openai-compatible': 'OpenAI-compatible (llama.cpp, Unsloth Studio, ...)',
@@ -61,55 +73,54 @@ function ProviderForm({
 
   const compat = (initial?.kind ?? kind) === 'openai-compatible';
   return (
-    <form onSubmit={submit} style={{ display: 'grid', gap: 8, maxWidth: 480, margin: '12px 0' }}>
-      {!initial && (
-        <select value={kind} onChange={(e) => setKind(e.target.value as ProviderKind)}>
-          {(Object.keys(KIND_LABEL) as ProviderKind[]).map((k) => (
-            <option key={k} value={k}>
-              {KIND_LABEL[k]}
-            </option>
-          ))}
-        </select>
-      )}
-      <input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-      <input
-        placeholder={
-          compat
-            ? 'Base URL, e.g. http://host.docker.internal:8080/v1'
-            : 'Base URL (optional, e.g. a proxy)'
-        }
-        value={baseUrl}
-        onChange={(e) => setBaseUrl(e.target.value)}
-      />
-      <input
-        type="password"
-        autoComplete="off"
-        placeholder={
-          initial?.hasKey
-            ? 'API key (leave blank to keep the stored key)'
-            : 'API key (optional for local servers)'
-        }
-        value={apiKey}
-        onChange={(e) => setApiKey(e.target.value)}
-      />
-      <input
-        placeholder="Models, comma-separated (or use Discover after saving)"
-        value={models}
-        onChange={(e) => setModels(e.target.value)}
-      />
-      {error && (
-        <p role="alert" style={{ color: 'crimson', margin: 0 }}>
-          {error}
-        </p>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button disabled={busy || !name.trim()}>{initial ? 'Save' : 'Add provider'}</button>
-        {onCancel && (
-          <button type="button" onClick={onCancel}>
-            Cancel
-          </button>
+    <form onSubmit={submit}>
+      <Stack gap="sm">
+        {!initial && (
+          <Select
+            aria-label="Provider type"
+            allowDeselect={false}
+            value={kind}
+            data={(Object.keys(KIND_LABEL) as ProviderKind[]).map((k) => ({
+              value: k,
+              label: KIND_LABEL[k],
+            }))}
+            onChange={(v) => v && setKind(v as ProviderKind)}
+          />
         )}
-      </div>
+        <TextInput label="Name" value={name} onChange={(e) => setName(e.currentTarget.value)} />
+        <TextInput
+          label="Base URL"
+          placeholder={compat ? 'http://host.docker.internal:8080/v1' : 'Optional, e.g. a proxy'}
+          value={baseUrl}
+          onChange={(e) => setBaseUrl(e.currentTarget.value)}
+        />
+        <PasswordInput
+          label="API key"
+          autoComplete="off"
+          placeholder={
+            initial?.hasKey ? 'Leave blank to keep the stored key' : 'Optional for local servers'
+          }
+          value={apiKey}
+          onChange={(e) => setApiKey(e.currentTarget.value)}
+        />
+        <TextInput
+          label="Models"
+          description="Comma-separated, or use Discover models after saving"
+          value={models}
+          onChange={(e) => setModels(e.currentTarget.value)}
+        />
+        <ErrorText error={error} />
+        <Group gap="xs">
+          <Button type="submit" disabled={busy || !name.trim()}>
+            {initial ? 'Save' : 'Add provider'}
+          </Button>
+          {onCancel && (
+            <Button type="button" variant="default" onClick={onCancel}>
+              Cancel
+            </Button>
+          )}
+        </Group>
+      </Stack>
     </form>
   );
 }
@@ -142,18 +153,16 @@ export function Providers() {
   }
 
   return (
-    <section>
-      <h2>Providers</h2>
-      <ProviderForm key={providers.length} onSaved={() => void refresh()} />
-      {message && <p>{message}</p>}
-      {error && (
-        <p role="alert" style={{ color: 'crimson' }}>
-          {error}
-        </p>
-      )}
-      <ul style={{ paddingLeft: 0, listStyle: 'none', display: 'grid', gap: 12 }}>
+    <Stack>
+      <Title order={2}>Providers</Title>
+      <Paper withBorder p="md" radius="md" maw={560}>
+        <ProviderForm key={providers.length} onSaved={() => void refresh()} />
+      </Paper>
+      {message && <Text size="sm">{message}</Text>}
+      <ErrorText error={error} />
+      <Stack gap="sm">
         {providers.map((p) => (
-          <li key={p.id}>
+          <Paper key={p.id} withBorder p="md" radius="md">
             {editing === p.id ? (
               <ProviderForm
                 initial={p}
@@ -164,15 +173,26 @@ export function Providers() {
                 }}
               />
             ) : (
-              <div>
-                <strong>{p.name}</strong> <small>({KIND_LABEL[p.kind]})</small>
-                <div>
-                  {p.baseUrl ?? 'default endpoint'} &middot; {p.hasKey ? 'key stored' : 'no key'}{' '}
-                  &middot; {p.models.length} model{p.models.length === 1 ? '' : 's'}
-                </div>
-                {p.warning && <div style={{ color: 'darkorange' }}>{p.warning}</div>}
-                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                  <button
+              <Stack gap={4}>
+                <Group gap="xs">
+                  <Text fw={600}>{p.name}</Text>
+                  <Text size="sm" c="dimmed">
+                    {KIND_LABEL[p.kind]}
+                  </Text>
+                </Group>
+                <Text size="sm" c="dimmed">
+                  {p.baseUrl ?? 'default endpoint'} · {p.hasKey ? 'key stored' : 'no key'} ·{' '}
+                  {p.models.length} model{p.models.length === 1 ? '' : 's'}
+                </Text>
+                {p.warning && (
+                  <Text size="sm" c="orange">
+                    {p.warning}
+                  </Text>
+                )}
+                <Group gap="xs" mt={4}>
+                  <Button
+                    size="xs"
+                    variant="light"
                     onClick={() =>
                       void act(async () => {
                         const updated = await discoverModels(p.id);
@@ -181,22 +201,27 @@ export function Providers() {
                     }
                   >
                     Discover models
-                  </button>
-                  <button onClick={() => setEditing(p.id)}>Edit</button>
-                  <button
+                  </Button>
+                  <Button size="xs" variant="subtle" onClick={() => setEditing(p.id)}>
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
                     onClick={() => {
                       if (confirm(`Delete provider "${p.name}"?`))
                         void act(() => deleteProvider(p.id));
                     }}
                   >
                     Delete
-                  </button>
-                </div>
-              </div>
+                  </Button>
+                </Group>
+              </Stack>
             )}
-          </li>
+          </Paper>
         ))}
-      </ul>
-    </section>
+      </Stack>
+    </Stack>
   );
 }
