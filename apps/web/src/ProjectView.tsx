@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react';
-import { createSession, deleteSession, listSessions, type Project, type Session } from './api.js';
+import {
+  createSession,
+  deleteSession,
+  listProviders,
+  listSessions,
+  type Project,
+  type Provider,
+  type Session,
+} from './api.js';
 import { SessionView } from './SessionView.js';
 
 export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState('');
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [choice, setChoice] = useState('');
 
   const refresh = () =>
     listSessions(project.id)
@@ -14,11 +24,18 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
 
   useEffect(() => {
     void refresh();
+    listProviders()
+      .then(setProviders)
+      .catch((e: Error) => setError(e.message));
   }, [project.id]);
 
   async function add() {
     try {
-      const s = await createSession(project.id);
+      const [providerId, ...rest] = choice.split(':');
+      const s = await createSession(
+        project.id,
+        choice ? { providerId: Number(providerId), modelId: rest.join(':') } : undefined,
+      );
       await refresh();
       setSelected(s.id);
     } catch (e) {
@@ -55,12 +72,23 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
               style={{ fontWeight: selected === s.id ? 700 : 400 }}
             >
               {s.name}
+              {s.modelId ? ` (${s.modelId})` : ''}
             </button>
             <button aria-label={`Delete ${s.name}`} onClick={() => void remove(s)}>
               &times;
             </button>
           </span>
         ))}
+        <select aria-label="Model" value={choice} onChange={(e) => setChoice(e.target.value)}>
+          <option value="">No model (pi default)</option>
+          {providers.flatMap((p) =>
+            p.models.map((m) => (
+              <option key={`${p.id}:${m}`} value={`${p.id}:${m}`}>
+                {p.name} / {m}
+              </option>
+            )),
+          )}
+        </select>
         <button onClick={() => void add()}>New session</button>
       </div>
       {selected !== null && <SessionView key={selected} sessionId={selected} />}

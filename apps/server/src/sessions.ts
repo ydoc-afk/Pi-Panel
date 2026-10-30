@@ -1,5 +1,9 @@
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
+import type { ProviderStore } from './providers.js';
 import { RpcClient, type PiEvent } from './rpc-client.js';
 import type { ContainerRuntime } from './runtime.js';
 
@@ -18,6 +22,8 @@ interface SessionRow {
   name: string;
   status: string;
   pi_session_file: string | null;
+  provider_id: number | null;
+  model_id: string | null;
   created_at: number;
 }
 
@@ -35,6 +41,8 @@ export const sessionDto = (r: SessionRow) => ({
   projectId: r.project_id,
   name: r.name,
   status: r.status,
+  providerId: r.provider_id,
+  modelId: r.model_id,
   createdAt: r.created_at,
 });
 
@@ -48,6 +56,8 @@ export class SessionManager {
   constructor(
     private readonly db: DatabaseSync,
     private readonly runtime: ContainerRuntime,
+    private readonly providers: ProviderStore,
+    private readonly dataDir: string,
   ) {
     // No pi process survives a panel restart, so nothing can still be running.
     db.prepare("UPDATE sessions SET status = 'idle' WHERE status = 'running'").run();
@@ -68,7 +78,10 @@ export class SessionManager {
     ).map(sessionDto);
   }
 
-  create(projectId: number, name?: string): SessionRow {
+  create(
+    projectId: number,
+    opts: { name?: string; providerId?: number; modelId?: string } = {},
+  ): SessionRow {
     const project = this.db.prepare('SELECT status FROM projects WHERE id = ?').get(projectId) as
       { status: string } | undefined;
     if (!project) throw new SessionError(404, 'Project not found');
@@ -78,10 +91,25 @@ export class SessionManager {
         n: number;
       }
     ).n;
+    if (opts.providerId !== undefined) {
+      if (!this.providers.find(opts.providerId)) throw new SessionError(404, 'Provider not found');
+      if (!opts.modelId)
+        throw new SessionError(400, 'modelId is required when a provider is chosen');
+    }
     const id = Number(
       this.db
-        .prepare('INSERT INTO sessions (project_id, name, status, created_at) VALUES (?, ?, ?, ?)')
-        .run(projectId, name || `Session ${count + 1}`, 'idle', Date.now()).lastInsertRowid,
+        .prepare(
+          `INSERT INTO sessions (project_id, name, status, provider_id, model_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          projectId,
+          opts.name || `Session ${count + 1}`,
+          'idle',
+          opts.providerId ?? null,
+          opts.providerId === undefined ? null : (opts.modelId ?? null),
+          Date.now(),
+        ).lastInsertRowid,
     );
     return this.row(id);
   }
@@ -185,9 +213,19 @@ export class SessionManager {
       'rpc',
       ...(row.pi_session_file ? ['--session', row.pi_session_file] : []),
     ];
+    const provider = row.provider_id ? this.providers.find(row.provider_id) : undefined;
     let proc;
     try {
-      proc = await this.runtime.exec(project.container_id, { cmd, workdir: '/workspace' });
+      await this.writeModelsJson(row.project_id);
+      proc = await this.runtime.exec(project.container_id, {
+        cmd,
+        workdir: '/workspace',
+        // Only the chosen provider's key is handed to this pi process.
+        env: {
+          PI_CODING_AGENT_DIR: SANDBOX_AGENT_DIR,
+          ...(provider ? this.providers.envFor(provider.id) : {}),
+        },
+      });
     } catch {
       throw new SessionError(502, 'Failed to start pi in the project container');
     }
@@ -206,7 +244,29 @@ export class SessionManager {
       this.stopClient(id, client);
       throw new SessionError(502, 'pi did not start correctly');
     }
+    if (provider && row.model_id) {
+      // set_model over RPC rather than --model: model ids such as "qwen2.5-coder:7b" would
+      // collide with the CLI's ":<thinking>" suffix syntax.
+      const res = await client
+        .request({ type: 'set_model', provider: provider.piKey, modelId: row.model_id })
+        .catch((err: Error) => ({ success: false, error: err.message }));
+      if (!res.success) {
+        this.stopClient(id, client);
+        throw new SessionError(400, `Model not available: ${res.error ?? 'unknown error'}`);
+      }
+    }
     return client;
+  }
+
+  /** Writes the keyless models.json that pi reads from the project's agent dir. */
+  private async writeModelsJson(projectId: number) {
+    const dir = agentDir(this.dataDir, projectId);
+    await mkdir(dir, { recursive: true });
+    const tmp = join(dir, 'models.json.tmp');
+    await writeFile(tmp, JSON.stringify(this.providers.modelsJson(), null, 2) + '\n', {
+      mode: 0o644,
+    });
+    await rename(tmp, join(dir, 'models.json'));
   }
 
   private handleClose(id: number, client: RpcClient, code: number | null, stderr: string) {
@@ -269,11 +329,25 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
 
   app.post<{ Params: { id: string } }>('/api/projects/:id/sessions', (req, reply) =>
     handle(reply, () => {
-      const { name } = (req.body ?? {}) as { name?: unknown };
-      const clean = typeof name === 'string' ? name.trim().slice(0, 80) : undefined;
-      return reply
-        .code(201)
-        .send({ session: sessionDto(manager.create(num(req.params.id), clean)) });
+      const { name, providerId, modelId } = (req.body ?? {}) as {
+        name?: unknown;
+        providerId?: unknown;
+        modelId?: unknown;
+      };
+      if (
+        providerId !== undefined &&
+        (!Number.isInteger(providerId) || typeof modelId !== 'string')
+      ) {
+        return reply
+          .code(400)
+          .send({ error: 'providerId must be an integer and modelId a string' });
+      }
+      const session = manager.create(num(req.params.id), {
+        name: typeof name === 'string' ? name.trim().slice(0, 80) : undefined,
+        providerId: providerId as number | undefined,
+        modelId: typeof modelId === 'string' ? modelId.trim().slice(0, 200) : undefined,
+      });
+      return reply.code(201).send({ session: sessionDto(session) });
     }),
   );
 

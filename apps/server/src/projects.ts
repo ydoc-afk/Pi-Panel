@@ -1,7 +1,7 @@
 import { chmod, chown, mkdir, rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
+import { agentDir, workspaceDir } from './paths.js';
 import type { ContainerRuntime } from './runtime.js';
 
 interface ProjectRow {
@@ -33,7 +33,8 @@ export function registerProjects(
   },
 ) {
   const { db, runtime } = deps;
-  const workspaceFor = (id: number) => resolve(deps.dataDir, 'workspaces', String(id));
+  const workspaceFor = (id: number) => workspaceDir(deps.dataDir, id);
+  const agentFor = (id: number) => agentDir(deps.dataDir, id);
   const find = (id: number) =>
     db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
 
@@ -68,10 +69,16 @@ export function registerProjects(
     );
     const workspacePath = workspaceFor(id);
     try {
-      await mkdir(workspacePath, { recursive: true });
-      // The sandbox user needs write access; fall back to open permissions when we cannot chown.
-      await chown(workspacePath, SANDBOX_UID, SANDBOX_UID).catch(() => chmod(workspacePath, 0o777));
-      const containerId = await runtime.createAndStart({ projectId: id, workspacePath });
+      for (const dir of [workspacePath, agentFor(id)]) {
+        await mkdir(dir, { recursive: true });
+        // The sandbox user needs write access; fall back to open permissions when we cannot chown.
+        await chown(dir, SANDBOX_UID, SANDBOX_UID).catch(() => chmod(dir, 0o777));
+      }
+      const containerId = await runtime.createAndStart({
+        projectId: id,
+        workspacePath,
+        agentDir: agentFor(id),
+      });
       db.prepare('UPDATE projects SET container_id = ?, status = ? WHERE id = ?').run(
         containerId,
         'running',
@@ -81,6 +88,7 @@ export function registerProjects(
       req.log.error({ err }, 'project creation failed');
       db.prepare('DELETE FROM projects WHERE id = ?').run(id);
       await rm(workspacePath, { recursive: true, force: true });
+      await rm(agentFor(id), { recursive: true, force: true });
       return reply.code(500).send({ error: 'Failed to create project container' });
     }
     return reply.code(201).send({ project: toDto(find(id)!) });
@@ -99,6 +107,7 @@ export function registerProjects(
       return reply.code(502).send({ error: 'Failed to remove project container' });
     }
     await rm(workspaceFor(id), { recursive: true, force: true });
+    await rm(agentFor(id), { recursive: true, force: true });
     db.prepare('DELETE FROM projects WHERE id = ?').run(id);
     return reply.code(204).send();
   });

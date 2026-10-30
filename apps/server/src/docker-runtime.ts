@@ -1,5 +1,6 @@
 import Docker from 'dockerode';
 import { PassThrough } from 'node:stream';
+import { SANDBOX_AGENT_DIR } from './paths.js';
 import type { ContainerRuntime, ContainerSpec, ExecSpec, RunningProcess } from './runtime.js';
 
 const DEFAULT_IMAGE = 'pi-panel/sandbox-base:latest';
@@ -19,7 +20,9 @@ export class DockerRuntime implements ContainerRuntime {
       Image: this.image,
       Labels: { 'pi-panel.project': String(spec.projectId) },
       HostConfig: {
-        Binds: [`${spec.workspacePath}:/workspace`],
+        Binds: [`${spec.workspacePath}:/workspace`, `${spec.agentDir}:${SANDBOX_AGENT_DIR}`],
+        // Lets sandboxes reach model servers on the Docker host (llama.cpp, Unsloth) on Linux too.
+        ExtraHosts: ['host.docker.internal:host-gateway'],
         Memory: 2 * 1024 * 1024 * 1024,
         PidsLimit: 512,
         CapDrop: ['ALL'],

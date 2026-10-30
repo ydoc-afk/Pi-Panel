@@ -3,6 +3,8 @@ import { FakePiProcess, type FakePiOptions } from './fake-pi.js';
 export interface ContainerSpec {
   projectId: number;
   workspacePath: string;
+  /** Host dir mounted as pi's agent dir inside the container. */
+  agentDir: string;
 }
 
 /** A process running inside a container, with piped stdio. */
@@ -36,6 +38,8 @@ export class FakeRuntime implements ContainerRuntime {
   readonly containers = new Map<string, ContainerSpec>();
   /** Every fake pi process started, in order; tests use this to kill or inspect them. */
   readonly processes: FakePiProcess[] = [];
+  /** Every exec spec received, in order (env included), for tests to inspect. */
+  readonly execs: ExecSpec[] = [];
   failNextCreate = false;
   fakePi: FakePiOptions = {};
   private next = 1;
@@ -57,6 +61,7 @@ export class FakeRuntime implements ContainerRuntime {
   async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
     if (!this.containers.has(containerId)) throw new Error('fake runtime: no such container');
     if (spec.cmd[0] !== 'pi') throw new Error(`fake runtime: unsupported command ${spec.cmd[0]}`);
+    this.execs.push(spec);
     const proc = new FakePiProcess(spec.cmd.slice(1), this.fakePi);
     this.processes.push(proc);
     return proc;

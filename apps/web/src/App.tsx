@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { AuthForm } from './AuthForm.js';
 import { Projects } from './Projects.js';
+import { Providers } from './Providers.js';
 import { getStatus, logout, type AuthStatus, type User } from './api.js';
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
+  const [tab, setTab] = useState<'projects' | 'providers'>('projects');
 
   useEffect(() => {
     getStatus()
@@ -27,7 +29,15 @@ export function App() {
           >
             Sign out
           </button>
-          <Projects />
+          <nav style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
+            <button aria-pressed={tab === 'projects'} onClick={() => setTab('projects')}>
+              Projects
+            </button>
+            <button aria-pressed={tab === 'providers'} onClick={() => setTab('providers')}>
+              Providers
+            </button>
+          </nav>
+          {tab === 'projects' ? <Projects /> : <Providers />}
         </>
       ) : (
         <AuthForm setup={status.setupRequired} onAuthed={authed} />

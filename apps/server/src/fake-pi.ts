@@ -141,6 +141,17 @@ export class FakePiProcess implements RunningProcess {
         await this.runPrompt(cmd.message);
         return;
       }
+      case 'set_model':
+        if (cmd.modelId === 'missing-model') {
+          this.respond(id, 'set_model', false, {
+            error: `Model not found: ${String(cmd.modelId)}`,
+          });
+        } else {
+          this.respond(id, 'set_model', true, {
+            data: { id: cmd.modelId, provider: cmd.provider },
+          });
+        }
+        return;
       case 'abort':
         if (this.run) this.run.aborted = true;
         this.respond(id, 'abort', true);

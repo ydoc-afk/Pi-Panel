@@ -21,12 +21,24 @@ CREATE TABLE IF NOT EXISTS projects (
   status TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS providers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  kind TEXT NOT NULL,
+  pi_key TEXT NOT NULL UNIQUE,
+  base_url TEXT,
+  api_key_enc TEXT,
+  models TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
   status TEXT NOT NULL,
   pi_session_file TEXT,
+  provider_id INTEGER REFERENCES providers(id) ON DELETE SET NULL,
+  model_id TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS session_events (
@@ -41,6 +53,10 @@ export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  addMissingColumns(db, 'sessions', {
+    provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
+    model_id: 'TEXT',
+  });
   return db;
 }
 
@@ -48,4 +64,16 @@ export function openDefaultDb(): DatabaseSync {
   const dir = process.env.DATA_DIR ?? './data';
   mkdirSync(dir, { recursive: true });
   return openDb(join(dir, 'pi-panel.db'));
+}
+
+/** Upgrades databases created before a column existed (CREATE TABLE IF NOT EXISTS skips them). */
+function addMissingColumns(db: DatabaseSync, table: string, columns: Record<string, string>) {
+  const have = new Set(
+    (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map(
+      (c) => c.name,
+    ),
+  );
+  for (const [name, def] of Object.entries(columns)) {
+    if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${def}`);
+  }
 }

@@ -60,6 +60,8 @@ export interface Session {
   projectId: number;
   name: string;
   status: 'idle' | 'running' | 'error';
+  providerId: number | null;
+  modelId: string | null;
   createdAt: number;
 }
 
@@ -76,8 +78,12 @@ const json = (body: unknown): RequestInit => ({
 
 export const listSessions = async (projectId: number) =>
   (await request<{ sessions: Session[] }>(`/api/projects/${projectId}/sessions`)).sessions;
-export const createSession = async (projectId: number) =>
-  (await request<{ session: Session }>(`/api/projects/${projectId}/sessions`, json({}))).session;
+export const createSession = async (
+  projectId: number,
+  model?: { providerId: number; modelId: string },
+) =>
+  (await request<{ session: Session }>(`/api/projects/${projectId}/sessions`, json(model ?? {})))
+    .session;
 export const deleteSession = (id: number) =>
   request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
 export const getSession = async (id: number) =>
@@ -96,3 +102,42 @@ export function openStream(id: number, after: number): WebSocket {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   return new WebSocket(`${proto}://${location.host}/api/sessions/${id}/stream?after=${after}`);
 }
+
+export type ProviderKind = 'anthropic' | 'openai' | 'openai-compatible';
+
+export interface Provider {
+  id: number;
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string | null;
+  hasKey: boolean;
+  models: string[];
+  warning?: string;
+}
+
+export interface ProviderInput {
+  kind?: ProviderKind;
+  name: string;
+  baseUrl?: string;
+  /** undefined keeps the stored key, null clears it. */
+  apiKey?: string | null;
+  models?: string[];
+}
+
+const send = (method: string, body?: unknown): RequestInit => ({
+  method,
+  headers: { 'content-type': 'application/json' },
+  body: body === undefined ? undefined : JSON.stringify(body),
+});
+
+export const listProviders = async () =>
+  (await request<{ providers: Provider[] }>('/api/providers')).providers;
+export const createProvider = async (input: ProviderInput) =>
+  (await request<{ provider: Provider }>('/api/providers', send('POST', input))).provider;
+export const updateProvider = async (id: number, input: ProviderInput) =>
+  (await request<{ provider: Provider }>(`/api/providers/${id}`, send('PUT', input))).provider;
+export const deleteProvider = (id: number) =>
+  request<void>(`/api/providers/${id}`, { method: 'DELETE' });
+export const discoverModels = async (id: number) =>
+  (await request<{ provider: Provider }>(`/api/providers/${id}/discover`, send('POST', {})))
+    .provider;
