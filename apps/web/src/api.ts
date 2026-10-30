@@ -168,6 +168,35 @@ export const testGitHub = (token?: string) =>
 /** Whether the sandbox image that project containers are created from has been built. */
 export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
 
+export interface RegistryEnvVar {
+  name: string;
+  description?: string;
+  isRequired: boolean;
+  isSecret: boolean;
+  default?: string;
+}
+export type RegistryInstall =
+  | { kind: 'npm'; identifier: string; version: string; env: RegistryEnvVar[] }
+  | { kind: 'remote'; url: string };
+export interface RegistryItem {
+  name: string;
+  title: string;
+  description: string;
+  version: string;
+  repository: string | null;
+  install: RegistryInstall | null;
+}
+/** Searches the official MCP registry through the panel. */
+export const searchRegistry = (q: string, cursor?: string) => {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (cursor) params.set('cursor', cursor);
+  const query = params.toString();
+  return request<{ items: RegistryItem[]; nextCursor: string | null }>(
+    `/api/mcp/registry${query ? `?${query}` : ''}`,
+  );
+};
+
 export type ReaBuildStatus = 'idle' | 'checking' | 'building' | 'done' | 'failed';
 export interface ReaState {
   image: string;
