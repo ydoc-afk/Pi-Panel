@@ -65,7 +65,7 @@ export function buildApp(opts: AppOptions = {}) {
   const sessions = new SessionManager(db, runtime, providers, dataDir, mcpStore, sidecars, samples);
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
-  const rea = new ReaBuilder(runtime);
+  const rea = new ReaBuilder(runtime, { dataDir });
   const packages = new PackageService(db, runtime, sessions, dataDir, {
     fetch: opts.fetch,
     ...opts.packages,
@@ -104,13 +104,19 @@ export function buildApp(opts: AppOptions = {}) {
     app.get('/api/rea', () => rea.status());
     app.post('/api/rea/build', async (req, reply) => {
       try {
-        rea.start((req.body ?? {}) as { ghidraUrl?: unknown; ghidraSha256?: unknown });
+        await rea.start((req.body ?? {}) as { ghidraUrl?: unknown; ghidraSha256?: unknown });
       } catch (err) {
         if (err instanceof ReaBuildError)
           return reply.code(err.status).send({ error: err.message });
         throw err;
       }
       return reply.code(202).send(await rea.status());
+    });
+    // The latest build's log, for troubleshooting a failed build.
+    app.get('/api/rea/log', (_req, reply) => {
+      const text = rea.latestLog();
+      if (text === null) return reply.code(404).send({ error: 'No REA build has been logged yet' });
+      return reply.type('text/plain; charset=utf-8').send(text);
     });
   });
   app.get('/api/health', async () => ({ status: 'ok' }));

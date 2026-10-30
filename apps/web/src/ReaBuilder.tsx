@@ -19,6 +19,7 @@ const URL_RE = /^https:\/\/\S+$/;
 
 const STATUS_TEXT = {
   idle: '',
+  checking: 'Checking the download link.',
   building: 'Building. This downloads Ghidra and a JDK, so it can take a while.',
   done: 'Build finished. The image is ready.',
   failed: 'Build failed.',
@@ -44,7 +45,7 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
     void refresh();
   }, []);
 
-  const building = state?.build.status === 'building';
+  const building = state?.build.status === 'building' || state?.build.status === 'checking';
   // Keep the log moving while a build runs, without a page reload.
   useEffect(() => {
     if (!building) return;
@@ -138,12 +139,20 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
                   {state.build.error}
                 </Text>
               )}
+              {state.build.hint && (
+                <Text size="sm" c="orange">
+                  {state.build.hint}
+                </Text>
+              )}
               <Code
                 block
                 style={{ fontSize: 12, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap' }}
               >
                 {log.join('\n') || '(waiting for output)'}
               </Code>
+              <Anchor href="/api/rea/log" download="rea-build.log" size="sm">
+                Download the build log
+              </Anchor>
             </Stack>
           )}
         </Stack>
