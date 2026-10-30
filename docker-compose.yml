@@ -5,8 +5,13 @@ services:
       - 'host.docker.internal:host-gateway'
     ports:
       - '3000:3000'
+    environment:
+      DATA_DIR: /data
+      # The Docker daemon resolves bind-mount paths on the host, so it must know where /data lives there.
+      # Run `docker compose up` from the repository root so ${PWD}/data is the directory mounted below.
+      PI_PANEL_HOST_DATA_DIR: ${PWD}/data
     volumes:
-      - pi-panel-data:/data
+      - ./data:/data
       # The backend is the only component that talks to Docker (project sandboxes).
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
@@ -16,6 +21,3 @@ services:
     build: ./docker/base
     image: pi-panel/sandbox-base:latest
     profiles: ['build-only']
-
-volumes:
-  pi-panel-data:

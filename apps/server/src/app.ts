@@ -6,6 +6,7 @@ import { registerAuth } from './auth.js';
 import { openDefaultDb } from './db.js';
 import { DockerRuntime } from './docker-runtime.js';
 import { GitHubService, registerGitHub, type GitHubOptions } from './github.js';
+import { LabService, registerLab, type LabOptions } from './lab.js';
 import { PackageService, registerPackages, type PackageOptions } from './packages.js';
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerProjects } from './projects.js';
@@ -23,6 +24,8 @@ export interface AppOptions {
   github?: GitHubOptions;
   /** Overrides for package review (tests). */
   packages?: PackageOptions;
+  /** Overrides for the package lab (tests). */
+  lab?: LabOptions;
 }
 
 /** PI_PANEL_RUNTIME=fake runs without Docker (UI development, demos). */
@@ -39,6 +42,7 @@ export function buildApp(opts: AppOptions = {}) {
   const providers = new ProviderStore(db, secrets, opts.fetch);
   const github = new GitHubService(db, secrets, dataDir, { fetch: opts.fetch, ...opts.github });
   const sessions = new SessionManager(db, runtime, providers, dataDir);
+  const lab = new LabService(db, runtime, dataDir, opts.lab);
   const packages = new PackageService(db, runtime, sessions, dataDir, {
     fetch: opts.fetch,
     ...opts.packages,
@@ -56,6 +60,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerProviders(app, providers);
     registerGitHub(app, github);
     registerPackages(app, packages);
+    registerLab(app, lab);
     registerSessions(app, sessions);
   });
   app.get('/api/health', async () => ({ status: 'ok' }));

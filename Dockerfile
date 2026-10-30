@@ -17,6 +17,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN npm ci --omit=dev -w @pi-panel/server
 COPY --from=build /app/apps/server/dist apps/server/dist
+COPY apps/server/assets apps/server/assets
 COPY --from=build /app/apps/web/dist apps/web/dist
 EXPOSE 3000
 CMD ["node", "apps/server/dist/index.js"]

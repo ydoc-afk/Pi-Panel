@@ -9,6 +9,7 @@ import {
   type Session,
 } from './api.js';
 import { GitHubPanel } from './GitHubPanel.js';
+import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { SessionView } from './SessionView.js';
 
@@ -62,6 +63,7 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
       <h2>{project.name}</h2>
       <GitHubPanel projectId={project.id} />
       <Packages projectId={project.id} />
+      <Lab projectId={project.id} />
       {error && (
         <p role="alert" style={{ color: 'crimson' }}>
           {error}

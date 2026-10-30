@@ -225,3 +225,82 @@ export const installPackage = (projectId: number, source: string) =>
   request<PackageChange>(`/api/projects/${projectId}/packages`, send('POST', { source }));
 export const removePackage = (projectId: number, source: string) =>
   request<PackageChange>(`/api/projects/${projectId}/packages/remove`, send('POST', { source }));
+
+export type LabKind = 'extension' | 'skill' | 'prompt' | 'theme';
+
+export interface LabPackage {
+  path: string;
+  name: string | null;
+  kinds: LabKind[];
+}
+
+export interface LabTest {
+  tool: string;
+  input: Record<string, unknown>;
+  expectContains?: string;
+  expectError?: boolean;
+}
+
+export interface LabDiagnostic {
+  kind: string;
+  type: string;
+  message: string;
+  path: string;
+}
+
+export interface LabTestResult {
+  tool: string;
+  input: unknown;
+  status: 'passed' | 'tool-error' | 'threw' | 'invalid-input' | 'not-found' | 'timeout';
+  ok: boolean;
+  output: string;
+  error: string | null;
+  schemaErrors: string[];
+  durationMs: number;
+}
+
+/** Produced by code that ran inside the lab container, so every field is optional here. */
+export interface LabReport {
+  ok?: boolean;
+  sdkVersion?: string | null;
+  package?: {
+    name: string | null;
+    version: string | null;
+    piPackage: boolean;
+    hasManifest: boolean;
+  } | null;
+  extensions?: string[];
+  extensionErrors?: { path: string; error: string }[];
+  commands?: { name: string; description: string }[];
+  tools?: { name: string; description: string; parameters: unknown; path: string }[];
+  skills?: { name: string; description: string; path: string }[];
+  prompts?: { name: string; description: string; path: string }[];
+  themes?: { name: string; path: string }[];
+  diagnostics?: LabDiagnostic[];
+  sessionError?: string | null;
+  harnessError?: string | null;
+  tests?: LabTestResult[];
+}
+
+export interface LabRun {
+  status: 'completed' | 'timeout' | 'no-report';
+  report: LabReport | null;
+  run: {
+    durationMs: number;
+    files: number;
+    bytes: number;
+    skipped: string[];
+    exitCode: number | null;
+    stderr: string;
+  };
+}
+
+export const listLabPackages = async (projectId: number) =>
+  (await request<{ packages: LabPackage[] }>(`/api/projects/${projectId}/lab/packages`)).packages;
+export const scaffoldLabPackage = (projectId: number, name: string, kinds: LabKind[]) =>
+  request<{ package: LabPackage; files: string[]; sampleTests: LabTest[] }>(
+    `/api/projects/${projectId}/lab/scaffold`,
+    send('POST', { name, kinds }),
+  );
+export const runLab = (projectId: number, path: string, tests: LabTest[]) =>
+  request<LabRun>(`/api/projects/${projectId}/lab/run`, send('POST', { path, tests }));

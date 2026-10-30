@@ -1,4 +1,5 @@
 import { FakePiProcess, type FakePiOptions } from './fake-pi.js';
+import type { TarEntry } from './tar.js';
 
 export interface ContainerSpec {
   projectId: number;
@@ -23,6 +24,24 @@ export interface ExecSpec {
   env?: Record<string, string>;
 }
 
+export interface ExecResult {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+}
+
+/** A one-shot run in a fresh, throwaway container; nothing from the host is mounted. */
+export interface EphemeralSpec {
+  /** Files copied into the container before it starts. */
+  files: TarEntry[];
+  cmd: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
+  /** No network at all inside the container. */
+  networkDisabled: boolean;
+}
+
 /** Container operations Pi-Panel needs; the Docker implementation is the only one that talks to Docker. */
 export interface ContainerRuntime {
   /** Creates and starts a sandbox container, returning its id. */
@@ -31,6 +50,8 @@ export interface ContainerRuntime {
   remove(containerId: string): Promise<void>;
   /** Starts a process in a running container with stdin/stdout/stderr attached. */
   exec(containerId: string, spec: ExecSpec): Promise<RunningProcess>;
+  /** Runs a command to completion in a new throwaway container, then removes it. */
+  runEphemeral(spec: EphemeralSpec): Promise<ExecResult>;
 }
 
 /** In-memory runtime for tests and for running the panel without Docker. */
@@ -40,6 +61,15 @@ export class FakeRuntime implements ContainerRuntime {
   readonly processes: FakePiProcess[] = [];
   /** Every exec spec received, in order (env included), for tests to inspect. */
   readonly execs: ExecSpec[] = [];
+  /** Every throwaway-container run received, in order. */
+  readonly ephemerals: EphemeralSpec[] = [];
+  /** Supplies the result of a throwaway run; by default it prints an empty passing lab report. */
+  ephemeralHandler: (spec: EphemeralSpec) => ExecResult | Promise<ExecResult> = () => ({
+    code: 0,
+    stdout: '@@PI_LAB_REPORT_BEGIN@@\n{"ok":true}\n@@PI_LAB_REPORT_END@@\n',
+    stderr: '',
+    timedOut: false,
+  });
   failNextCreate = false;
   fakePi: FakePiOptions = {};
   private next = 1;
@@ -68,5 +98,10 @@ export class FakeRuntime implements ContainerRuntime {
     });
     this.processes.push(proc);
     return proc;
+  }
+
+  async runEphemeral(spec: EphemeralSpec): Promise<ExecResult> {
+    this.ephemerals.push(spec);
+    return this.ephemeralHandler(spec);
   }
 }

@@ -1,11 +1,6 @@
-import type { ContainerRuntime, ExecSpec } from './runtime.js';
+import type { ContainerRuntime, ExecResult, ExecSpec } from './runtime.js';
 
-export interface ExecResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-  timedOut: boolean;
-}
+export type { ExecResult };
 
 const MAX_OUTPUT = 1024 * 1024;
 
