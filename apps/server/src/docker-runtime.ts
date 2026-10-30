@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import { SANDBOX_AGENT_DIR } from './paths.js';
 import { createTar } from './tar.js';
 import type {
+  BuildSpec,
   ContainerRuntime,
   ContainerSpec,
   EphemeralSpec,
@@ -289,12 +290,36 @@ export class DockerRuntime implements ContainerRuntime {
   }
 
   async hasSandboxImage(): Promise<boolean> {
+    return this.imageExists(this.image);
+  }
+
+  async imageExists(tag: string): Promise<boolean> {
     try {
-      await this.docker.getImage(this.image).inspect();
+      await this.docker.getImage(tag).inspect();
       return true;
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return false;
       throw err;
     }
+  }
+
+  async buildImage(spec: BuildSpec): Promise<void> {
+    const body = new PassThrough();
+    body.end(spec.context);
+    const stream = await this.docker.buildImage(body, {
+      t: spec.tag,
+      buildargs: spec.buildArgs,
+      rm: true,
+    });
+    await new Promise<void>((resolve, reject) => {
+      this.docker.modem.followProgress(
+        stream,
+        (err: Error | null) => (err ? reject(err) : resolve()),
+        (event: { stream?: string; error?: string }) => {
+          if (event.error) spec.onLog(event.error.trimEnd());
+          else if (event.stream) spec.onLog(event.stream.trimEnd());
+        },
+      );
+    });
   }
 }
