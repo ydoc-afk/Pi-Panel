@@ -31,6 +31,7 @@ export interface Project {
   id: number;
   name: string;
   status: string;
+  repo: string | null;
   createdAt: number;
 }
 
@@ -141,3 +142,39 @@ export const deleteProvider = (id: number) =>
 export const discoverModels = async (id: number) =>
   (await request<{ provider: Provider }>(`/api/providers/${id}/discover`, send('POST', {})))
     .provider;
+
+export interface GitHubAccount {
+  connected: boolean;
+  login?: string;
+}
+
+export interface RepoStatus {
+  repo: string | null;
+  branch: string | null;
+  changes: number;
+}
+
+export const getGitHub = () => request<GitHubAccount>('/api/github');
+export const connectGitHub = (token: string) =>
+  request<GitHubAccount>('/api/github', send('PUT', { token }));
+export const disconnectGitHub = () => request<void>('/api/github', { method: 'DELETE' });
+export const getRepoStatus = (projectId: number) =>
+  request<RepoStatus>(`/api/projects/${projectId}/github`);
+export const cloneRepo = (projectId: number, repo: string, branch?: string) =>
+  request<{ repo: string; branch: string }>(
+    `/api/projects/${projectId}/github/clone`,
+    send('POST', { repo, ...(branch ? { branch } : {}) }),
+  );
+export const pushBranch = (projectId: number, branch: string, message?: string) =>
+  request<{ branch: string; commit: string; committed: boolean }>(
+    `/api/projects/${projectId}/github/push`,
+    send('POST', { branch, ...(message ? { message } : {}) }),
+  );
+export const openPullRequest = (
+  projectId: number,
+  input: { head: string; title: string; body?: string },
+) =>
+  request<{ url: string; number: number | null; base: string }>(
+    `/api/projects/${projectId}/github/pr`,
+    send('POST', input),
+  );

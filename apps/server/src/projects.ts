@@ -1,7 +1,7 @@
 import { chmod, chown, mkdir, rm } from 'node:fs/promises';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
-import { agentDir, workspaceDir } from './paths.js';
+import { SANDBOX_UID, agentDir, workspaceDir } from './paths.js';
 import type { ContainerRuntime } from './runtime.js';
 
 interface ProjectRow {
@@ -9,16 +9,17 @@ interface ProjectRow {
   name: string;
   container_id: string | null;
   status: string;
+  repo: string | null;
   created_at: number;
 }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
-const SANDBOX_UID = 1000;
 
 const toDto = (r: ProjectRow) => ({
   id: r.id,
   name: r.name,
   status: r.status,
+  repo: r.repo,
   createdAt: r.created_at,
 });
 

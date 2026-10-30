@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { AuthForm } from './AuthForm.js';
+import { GitHubAccount } from './GitHubAccount.js';
 import { Projects } from './Projects.js';
 import { Providers } from './Providers.js';
 import { getStatus, logout, type AuthStatus, type User } from './api.js';
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [tab, setTab] = useState<'projects' | 'providers'>('projects');
+  const [tab, setTab] = useState<'projects' | 'providers' | 'github'>('projects');
 
   useEffect(() => {
     getStatus()
@@ -36,8 +37,13 @@ export function App() {
             <button aria-pressed={tab === 'providers'} onClick={() => setTab('providers')}>
               Providers
             </button>
+            <button aria-pressed={tab === 'github'} onClick={() => setTab('github')}>
+              GitHub
+            </button>
           </nav>
-          {tab === 'projects' ? <Projects /> : <Providers />}
+          {tab === 'projects' && <Projects />}
+          {tab === 'providers' && <Providers />}
+          {tab === 'github' && <GitHubAccount />}
         </>
       ) : (
         <AuthForm setup={status.setupRequired} onAuthed={authed} />

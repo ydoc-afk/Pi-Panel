@@ -8,6 +8,7 @@ import {
   type Provider,
   type Session,
 } from './api.js';
+import { GitHubPanel } from './GitHubPanel.js';
 import { SessionView } from './SessionView.js';
 
 export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
@@ -58,6 +59,7 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
     <section>
       <button onClick={onBack}>&larr; Projects</button>
       <h2>{project.name}</h2>
+      <GitHubPanel projectId={project.id} />
       {error && (
         <p role="alert" style={{ color: 'crimson' }}>
           {error}

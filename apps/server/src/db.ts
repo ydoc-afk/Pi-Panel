@@ -19,6 +19,14 @@ CREATE TABLE IF NOT EXISTS projects (
   name TEXT NOT NULL UNIQUE,
   container_id TEXT,
   status TEXT NOT NULL,
+  repo TEXT,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS github_account (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  login TEXT NOT NULL,
+  user_id INTEGER NOT NULL,
+  token_enc TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS providers (
@@ -53,6 +61,7 @@ export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  addMissingColumns(db, 'projects', { repo: 'TEXT' });
   addMissingColumns(db, 'sessions', {
     provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
     model_id: 'TEXT',

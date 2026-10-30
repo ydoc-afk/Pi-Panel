@@ -12,6 +12,9 @@ WORKDIR /app
 ENV NODE_ENV=production PORT=3000 DATA_DIR=/data
 COPY package.json package-lock.json ./
 COPY apps/server/package.json apps/server/
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 RUN npm ci --omit=dev -w @pi-panel/server
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/apps/web/dist apps/web/dist

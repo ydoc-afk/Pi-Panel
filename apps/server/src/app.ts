@@ -5,6 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { registerAuth } from './auth.js';
 import { openDefaultDb } from './db.js';
 import { DockerRuntime } from './docker-runtime.js';
+import { GitHubService, registerGitHub, type GitHubOptions } from './github.js';
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
@@ -17,6 +18,8 @@ export interface AppOptions {
   dataDir?: string;
   /** Overrides fetch for provider model discovery (tests). */
   fetch?: typeof fetch;
+  /** Overrides for the GitHub service (tests point it at local repositories). */
+  github?: GitHubOptions;
 }
 
 /** PI_PANEL_RUNTIME=fake runs without Docker (UI development, demos). */
@@ -29,7 +32,9 @@ export function buildApp(opts: AppOptions = {}) {
   const db = opts.db ?? openDefaultDb();
   const dataDir = opts.dataDir ?? process.env.DATA_DIR ?? './data';
   const runtime = opts.runtime ?? defaultRuntime();
-  const providers = new ProviderStore(db, new Secrets(dataDir), opts.fetch);
+  const secrets = new Secrets(dataDir);
+  const providers = new ProviderStore(db, secrets, opts.fetch);
+  const github = new GitHubService(db, secrets, dataDir, { fetch: opts.fetch, ...opts.github });
   const sessions = new SessionManager(db, runtime, providers, dataDir);
   app.register(cookie);
   app.register(websocket);
@@ -42,6 +47,7 @@ export function buildApp(opts: AppOptions = {}) {
       beforeRemove: (id) => sessions.stopProject(id),
     });
     registerProviders(app, providers);
+    registerGitHub(app, github);
     registerSessions(app, sessions);
   });
   app.get('/api/health', async () => ({ status: 'ok' }));
