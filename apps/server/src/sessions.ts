@@ -173,6 +173,24 @@ export class SessionManager {
     for (const { id } of ids) this.stop(id);
   }
 
+  /** Stops pi processes of sessions that are not mid-run; returns how many stopped and how many are still running. */
+  stopIdleForProject(projectId: number): { stopped: number; running: number } {
+    const rows = this.db
+      .prepare('SELECT id, status FROM sessions WHERE project_id = ?')
+      .all(projectId) as unknown as { id: number; status: string }[];
+    let stopped = 0;
+    let running = 0;
+    for (const { id, status } of rows) {
+      if (!this.live.has(id)) continue;
+      if (status === 'running') running++;
+      else {
+        this.stop(id);
+        stopped++;
+      }
+    }
+    return { stopped, running };
+  }
+
   delete(id: number) {
     this.row(id);
     this.stop(id);

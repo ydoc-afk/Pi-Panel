@@ -62,7 +62,10 @@ export class FakeRuntime implements ContainerRuntime {
     if (!this.containers.has(containerId)) throw new Error('fake runtime: no such container');
     if (spec.cmd[0] !== 'pi') throw new Error(`fake runtime: unsupported command ${spec.cmd[0]}`);
     this.execs.push(spec);
-    const proc = new FakePiProcess(spec.cmd.slice(1), this.fakePi);
+    const proc = new FakePiProcess(spec.cmd.slice(1), {
+      ...this.fakePi,
+      agentDir: this.containers.get(containerId)!.agentDir,
+    });
     this.processes.push(proc);
     return proc;
   }

@@ -178,3 +178,50 @@ export const openPullRequest = (
     `/api/projects/${projectId}/github/pr`,
     send('POST', input),
   );
+
+export interface InstalledPackage {
+  source: string;
+  name: string | null;
+  version: string | null;
+  filtered: boolean;
+}
+
+export interface PackageReview {
+  source: string;
+  name: string;
+  version: string;
+  description: string | null;
+  license: string | null;
+  repository: string | null;
+  homepage: string | null;
+  author: string | null;
+  publisher: string | null;
+  deprecated: string | null;
+  dependencies: string[];
+  installScripts: string[];
+  resources: { extensions: number; skills: number; prompts: number; themes: number } | null;
+  unpackedBytes: number | null;
+  fileCount: number | null;
+  links: { npm: string; files: string };
+  warnings: string[];
+}
+
+export interface PackageChange {
+  packages: InstalledPackage[];
+  restartedSessions: number;
+  pendingSessions: number;
+}
+
+export const listPackages = async (projectId: number) =>
+  (await request<{ packages: InstalledPackage[] }>(`/api/projects/${projectId}/packages`)).packages;
+export const previewPackage = async (projectId: number, source: string) =>
+  (
+    await request<{ review: PackageReview }>(
+      `/api/projects/${projectId}/packages/preview`,
+      send('POST', { source }),
+    )
+  ).review;
+export const installPackage = (projectId: number, source: string) =>
+  request<PackageChange>(`/api/projects/${projectId}/packages`, send('POST', { source }));
+export const removePackage = (projectId: number, source: string) =>
+  request<PackageChange>(`/api/projects/${projectId}/packages/remove`, send('POST', { source }));

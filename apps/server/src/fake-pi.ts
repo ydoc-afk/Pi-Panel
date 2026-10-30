@@ -1,8 +1,12 @@
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { RunningProcess } from './runtime.js';
 
 export interface FakePiOptions {
   /** Split stdout writes into chunks of this many bytes, to exercise record framing. */
   chunkSize?: number;
+  /** Host dir standing in for pi's agent dir; the fake `pi install/remove/list` CLI edits settings.json there. */
+  agentDir?: string;
 }
 
 type Cb<T> = (value: T) => void;
@@ -30,6 +34,10 @@ export class FakePiProcess implements RunningProcess {
   ) {
     this.args = args;
     const i = args.indexOf('--session');
+    const sub = args[0];
+    if (sub === 'install' || sub === 'remove' || sub === 'list') {
+      setImmediate(() => this.runCli(sub, args[1]));
+    }
     this.sessionFile =
       i >= 0 && args[i + 1]
         ? args[i + 1]!
@@ -55,6 +63,43 @@ export class FakePiProcess implements RunningProcess {
       this.inbox = this.inbox.slice(i + 1);
       if (line.trim()) void this.handle(line);
     }
+  }
+
+  get exited() {
+    return this.dead;
+  }
+
+  private runCli(sub: string, source: string | undefined) {
+    const out = (text: string) => {
+      for (const cb of this.stdout) cb(Buffer.from(text));
+    };
+    if (this.dead) return;
+    const dir = this.opts.agentDir;
+    if (!dir) return this.die(2);
+    const file = join(dir, 'settings.json');
+    let settings: { packages?: unknown[] } = {};
+    try {
+      settings = JSON.parse(readFileSync(file, 'utf8')) as typeof settings;
+    } catch {
+      /* no settings yet */
+    }
+    const packages = Array.isArray(settings.packages) ? settings.packages : [];
+    const sourceOf = (e: unknown) =>
+      typeof e === 'string' ? e : (e as { source?: string }).source;
+    if (sub === 'list') {
+      out(packages.map(sourceOf).join('\n') + '\n');
+      return this.die(0);
+    }
+    if (!source || source.includes('fail')) {
+      this.stderrLine(`npm error 404 Not Found - GET https://registry.npmjs.org/${source ?? ''}`);
+      return this.die(1);
+    }
+    const next = packages.filter((e) => sourceOf(e) !== source);
+    if (sub === 'install') next.push(source);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, JSON.stringify({ ...settings, packages: next }, null, 2));
+    out(`${sub === 'install' ? 'Installed' : 'Removed'} ${source}\n`);
+    this.die(0);
   }
 
   kill() {
