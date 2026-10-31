@@ -21,10 +21,14 @@ export interface SessionUser {
  * What an approved member may not do: anything that changes or spends the admin's credentials and
  * shared configuration (providers, the GitHub account, the MCP library, the REA image build) or
  * pushes under the admin's GitHub identity. Members work in projects and sessions.
+ *
+ * `path` should be the matched route pattern (`/api/projects/:id/github/push`), not the raw URL:
+ * the router decodes percent-escapes, so `/api/%70roviders` reaches the providers routes while a
+ * raw-string comparison would not recognise it.
  */
 export function memberBlocked(method: string, path: string): boolean {
   if (path.startsWith('/api/admin/')) return true;
-  if (/^\/api\/projects\/\d+\/github\/(clone|push|pr)$/.test(path)) return true;
+  if (/^\/api\/projects\/[^/]+\/github\/(clone|push|pr)$/.test(path)) return true;
   if (method === 'GET' || method === 'HEAD') {
     return path === '/api/mcp/registry' || path === '/api/rea/log';
   }
@@ -59,6 +63,22 @@ function credentialsError(creds: { username: string; password: string } | null):
     return `Password must be at least ${MIN_PASSWORD} characters`;
   }
   return '';
+}
+
+/**
+ * The path used for access decisions: the route pattern when a route matched, otherwise the decoded
+ * URL path (an unmatched request still needs a signed-in user, then gets a 404).
+ */
+export function routePath(req: FastifyRequest): string {
+  // The not-found handler matches as "*"; only real API route patterns are used.
+  const pattern = req.routeOptions?.url;
+  if (pattern?.startsWith('/api/')) return pattern;
+  const raw = req.url.split('?')[0] ?? '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
@@ -233,7 +253,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
 
   // Guard for all other /api routes (health and auth endpoints stay public).
   app.addHook('onRequest', async (req, reply) => {
-    const path = req.url.split('?')[0] ?? '';
+    const path = routePath(req);
     if (!path.startsWith('/api/') || path === '/api/health' || path.startsWith('/api/auth/'))
       return;
     const user = currentUser(req);
