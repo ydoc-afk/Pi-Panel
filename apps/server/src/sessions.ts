@@ -212,6 +212,12 @@ export class SessionManager {
     return { stopped, running };
   }
 
+  rename(id: number, name: string) {
+    this.row(id);
+    this.db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run(name, id);
+    return this.row(id);
+  }
+
   delete(id: number) {
     this.row(id);
     this.stop(id);
@@ -411,6 +417,17 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id', (req, reply) =>
     handle(reply, () => ({ session: sessionDto(manager.row(num(req.params.id))) })),
+  );
+
+  app.patch<{ Params: { id: string } }>('/api/sessions/:id', (req, reply) =>
+    handle(reply, () => {
+      const { name } = (req.body ?? {}) as { name?: unknown };
+      const clean = typeof name === 'string' ? name.trim() : '';
+      if (!clean || clean.length > 80) {
+        return reply.code(400).send({ error: 'Name must be 1-80 characters' });
+      }
+      return { session: sessionDto(manager.rename(num(req.params.id), clean)) };
+    }),
   );
 
   app.delete<{ Params: { id: string } }>('/api/sessions/:id', (req, reply) =>
