@@ -14,6 +14,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
@@ -164,11 +165,13 @@ export function App() {
             <ColorControls />
             <Menu position="bottom-end" width={200}>
               <Menu.Target>
-                <Tip label="Account">
+                {/* Mantine's Tooltip passes the menu's click handler and ref through; the Tip
+                    wrapper's <span> does not, which left this menu impossible to open. */}
+                <Tooltip label="Account" openDelay={350} withArrow>
                   <UnstyledButton aria-label="Account menu">
                     <Avatar size="sm" color="initials" name={status.user.username} />
                   </UnstyledButton>
-                </Tip>
+                </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>
