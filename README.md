@@ -12,7 +12,11 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
 ## What it does
 
 - **Projects and sessions.** One container per project with a bind-mounted workspace; pi runs inside it.
-  Sessions stream live over WebSocket, persist their transcript, and resume.
+  Sessions stream live over WebSocket, persist their transcript, and resume. The terminal shows each
+  tool call with its command and output, takes multi-line prompts, lets you steer or queue a follow-up
+  while pi works, and exports the transcript as Markdown. A stopped or missing container is detected and
+  can be started again, and **Recreate container** moves a project to a rebuilt sandbox image without
+  losing files or history.
 - **Providers.** Anthropic, OpenAI, and any OpenAI-compatible server (llama.cpp, Unsloth Studio, ...).
   Keys are encrypted at rest. _Test connection_ checks a provider's settings before you save them, and
   model lists are discovered from the provider.
@@ -32,7 +36,8 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
   GitHub, the MCP library and user management stay admin only. Projects, keys and tokens are still shared
   by everyone on the panel, so approve only people you trust.
 - **Interface.** Light, dark or system colour scheme, a choice of accent colours, and tooltips on the main
-  controls. Both are remembered per browser.
+  controls. Both are remembered per browser. Pages have their own URLs, so refresh and Back keep your
+  place. The account menu has Change password and an About box with the panel and pi versions.
 
 ## Screenshots
 
@@ -81,6 +86,17 @@ the host: run it only on a machine and network you trust, and put it behind HTTP
 `COOKIE_SECURE: 'true'` to the `pi-panel` service's `environment` in `docker-compose.yml`) if anyone
 else can reach it.
 
+Settings in `docker-compose.yml` (set the `PI_PANEL_*` variables in your shell or a `.env` file):
+
+| Variable                                         | Default | What it does                                                                                                               |
+| ------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `PI_PANEL_TRUST_PROXY`                           | `false` | Behind a reverse proxy, `true` makes sign-in throttling see real client addresses. Only when the proxy is the only way in. |
+| `PI_PANEL_SANDBOX_MEMORY_MB`                     | `2048`  | Memory limit for each project container.                                                                                   |
+| `PI_PANEL_SANDBOX_CPUS`                          | `2`     | CPU limit for each project container.                                                                                      |
+| `ALLOWED_ORIGINS` (in the service `environment`) | none    | Extra origins allowed to call the API, for proxies that rewrite the `Host` header.                                         |
+
+Resource limits apply to containers created or recreated after you change them.
+
 Optional: the REA reverse-engineering image needs a Ghidra release you choose and verify. In the MCP tab,
 paste its download link and SHA-256 checksum and press **Build REA image**, or build it by hand (see
 [docs/rea.md](docs/rea.md)).
@@ -94,7 +110,7 @@ npm install
 npm run dev:server   # API on :3000 (PI_PANEL_RUNTIME=fake runs without Docker)
 npm run dev:web      # UI on :5173, proxying /api to the server
 
-npm run typecheck && npm run lint && npm test && npm run build
+npm run format:check && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
 `PI_PANEL_RUNTIME=fake` swaps Docker for an in-memory runtime with a scripted fake pi, so the whole UI
@@ -124,7 +140,12 @@ docs/                design notes and how-tos
 
 ## Security model, briefly
 
-- One admin account, created on first run. Sessions use HttpOnly, SameSite=Strict cookies.
+- One admin account, created on first run. Sessions use HttpOnly, SameSite=Strict cookies. Failed
+  sign-ins are limited per address (10 per 15 minutes), and expired sign-ins are purged.
+- Writes and WebSocket connections must come from the panel's own origin. SameSite cookies alone do
+  not stop another app on the same host (a different port) from using your session.
+- Member restrictions are checked against the matched route, not the raw URL, so encoded paths cannot
+  reach admin routes. Responses carry a Content-Security-Policy and anti-framing headers.
 - Each project runs in its own container with dropped capabilities and resource limits. The agent runs
   with that container's permissions, so provider keys or command-server secrets passed to a session are
   visible to it. Prefer URL servers that hold their own credentials, or managed containers.
@@ -144,7 +165,8 @@ docs/                design notes and how-tos
 | MCP env passing, secret redaction, repo-local `.pi` not executing           | Real pi and a real MCP server                                  |
 | REA catalog over HTTP (229 tools, 32 destructive hidden by default)         | Real REA 6.8.0 and real pi                                     |
 | Web UI flows (before the Mantine redesign) and serving the built UI         | Driven in a real browser (Playwright) and with the real server |
-| Mantine redesign: typecheck, production build, lint                         | Automated checks only; not yet driven in a browser             |
+| Sign-in, projects, sessions, routing, account menu (Mantine UI)             | Driven in headless Chromium against the fake runtime           |
+| Container start/recreate and status tracking                                | Automated tests (fake runtime); not yet against real Docker    |
 | **Docker: sandbox and panel images build; the panel container runs**        | **Built and started with Docker Compose on a real host**       |
 | **Docker: networks, mounts, `exec`, sidecars, project sessions**            | **Not verified end to end**                                    |
 | **Ghidra / JDK analysis inside the REA image**                              | **Not verified**                                               |
@@ -153,9 +175,10 @@ Expect to fix things on the first real run, and please report what breaks.
 
 ## Not built yet
 
-Promoting lab packages to a shared toolbox, a schema migrations table, a pi version and update page,
-update checks for packages and MCP servers, per-call approval prompts for risky tools, multi-user
-support, and a panel update notice. See [docs/updates.md](docs/updates.md).
+Promoting lab packages to a shared toolbox, one-click pi upgrades (the About box shows the version;
+upgrading is still a rebuild plus **Recreate container**), update checks for packages and MCP servers,
+per-call approval prompts for risky tools, multi-user support, and a panel update notice. See
+[docs/updates.md](docs/updates.md).
 
 ## Documentation
 
