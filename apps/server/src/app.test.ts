@@ -8,10 +8,10 @@ import { FakeRuntime } from './runtime.js';
 
 describe('health endpoint', () => {
   it('returns ok', async () => {
-    const app = buildApp();
+    const app = buildApp({ db: openDb(':memory:'), runtime: new FakeRuntime() });
     const res = await app.inject({ method: 'GET', url: '/api/health' });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ status: 'ok' });
+    expect(res.json()).toMatchObject({ status: 'ok', db: true, docker: true });
   });
 });
 
