@@ -2,12 +2,17 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { hash, verify } from '@node-rs/argon2';
+import { FailureThrottle } from './throttle.js';
 
 const COOKIE = 'pp_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD = 12;
 /** Caps open registrations so the public form cannot be used to fill the database. */
 const MAX_PENDING = 50;
+/** Failed sign-ins allowed per address inside the window before further attempts are refused. */
+const LOGIN_FAILURES = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const PURGE_EVERY_MS = 60 * 60 * 1000;
 
 export type Role = 'admin' | 'member';
 export type AccountStatus = 'pending' | 'approved' | 'rejected';
@@ -21,10 +26,14 @@ export interface SessionUser {
  * What an approved member may not do: anything that changes or spends the admin's credentials and
  * shared configuration (providers, the GitHub account, the MCP library, the REA image build) or
  * pushes under the admin's GitHub identity. Members work in projects and sessions.
+ *
+ * `path` should be the matched route pattern (`/api/projects/:id/github/push`), not the raw URL:
+ * the router decodes percent-escapes, so `/api/%70roviders` reaches the providers routes while a
+ * raw-string comparison would not recognise it.
  */
 export function memberBlocked(method: string, path: string): boolean {
   if (path.startsWith('/api/admin/')) return true;
-  if (/^\/api\/projects\/\d+\/github\/(clone|push|pr)$/.test(path)) return true;
+  if (/^\/api\/projects\/[^/]+\/github\/(clone|push|pr)$/.test(path)) return true;
   if (method === 'GET' || method === 'HEAD') {
     return path === '/api/mcp/registry' || path === '/api/rea/log';
   }
@@ -61,8 +70,33 @@ function credentialsError(creds: { username: string; password: string } | null):
   return '';
 }
 
+/**
+ * The path used for access decisions: the route pattern when a route matched, otherwise the decoded
+ * URL path (an unmatched request still needs a signed-in user, then gets a 404).
+ */
+export function routePath(req: FastifyRequest): string {
+  // The not-found handler matches as "*"; only real API route patterns are used.
+  const pattern = req.routeOptions?.url;
+  if (pattern?.startsWith('/api/')) return pattern;
+  const raw = req.url.split('?')[0] ?? '';
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   const secure = process.env.COOKIE_SECURE === 'true';
+  const loginFailures = new FailureThrottle(LOGIN_FAILURES, LOGIN_WINDOW_MS);
+
+  // Expired sign-ins are refused anyway; this just keeps the table from growing forever.
+  const purgeExpired = () =>
+    db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(Date.now());
+  purgeExpired();
+  const purgeTimer = setInterval(purgeExpired, PURGE_EVERY_MS);
+  purgeTimer.unref();
+  app.addHook('onClose', async () => clearInterval(purgeTimer));
 
   const userCount = () => (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
 
@@ -155,13 +189,24 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   app.post('/api/auth/login', async (req, reply) => {
     const creds = parseCredentials(req.body);
     if (!creds) return reply.code(400).send({ error: 'Username and password required' });
+    const wait = loginFailures.retryAfter(req.ip);
+    if (wait > 0) {
+      return reply
+        .code(429)
+        .header('retry-after', String(wait))
+        .send({ error: `Too many failed sign-ins. Try again in ${Math.ceil(wait / 60)} min.` });
+    }
     const row = db
       .prepare('SELECT id, username, password_hash, role, status FROM users WHERE username = ?')
       .get(creds.username) as
       | { id: number; username: string; password_hash: string; role: Role; status: AccountStatus }
       | undefined;
     const ok = row ? await verify(row.password_hash, creds.password) : false;
-    if (!row || !ok) return reply.code(401).send({ error: 'Invalid username or password' });
+    if (!row || !ok) {
+      loginFailures.fail(req.ip);
+      return reply.code(401).send({ error: 'Invalid username or password' });
+    }
+    loginFailures.reset(req.ip);
     // The status is only revealed to someone who knows the password.
     if (row.status === 'pending') {
       return reply.code(403).send({ error: 'Your account is waiting for the admin to approve it' });
@@ -233,7 +278,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
 
   // Guard for all other /api routes (health and auth endpoints stay public).
   app.addHook('onRequest', async (req, reply) => {
-    const path = req.url.split('?')[0] ?? '';
+    const path = routePath(req);
     if (!path.startsWith('/api/') || path === '/api/health' || path.startsWith('/api/auth/'))
       return;
     const user = currentUser(req);
