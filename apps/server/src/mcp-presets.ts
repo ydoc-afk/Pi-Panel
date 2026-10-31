@@ -80,4 +80,21 @@ export const MCP_PRESETS: McpPreset[] = [
       timeout: 120,
     },
   },
+  {
+    id: 'firecrawl',
+    title: 'Firecrawl (web scraping)',
+    description: 'Scrape, crawl, map and search the web through your self-hosted Firecrawl.',
+    notes: [
+      'Points at a self-hosted Firecrawl on the Docker host (port 3002). Start that stack first; no API key is needed for a local instance without auth.',
+      'The first start downloads the package with npx, so it needs the npm registry from the project container.',
+    ],
+    server: {
+      name: 'firecrawl',
+      type: 'stdio',
+      command: 'npx',
+      args: ['-y', 'firecrawl-mcp@3.36.0'],
+      env: [{ key: 'FIRECRAWL_API_URL', value: 'http://host.docker.internal:3002', secret: false }],
+      description: 'Web scraping and search via self-hosted Firecrawl',
+    },
+  },
 ];

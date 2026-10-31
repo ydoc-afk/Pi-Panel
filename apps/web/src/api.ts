@@ -1,6 +1,7 @@
 export interface User {
   id: number;
   username: string;
+  role: 'admin' | 'member';
 }
 
 export interface AuthStatus {
@@ -25,6 +26,8 @@ export const setupAdmin = (username: string, password: string) =>
   post<{ user: User }>('/api/auth/setup', { username, password });
 export const login = (username: string, password: string) =>
   post<{ user: User }>('/api/auth/login', { username, password });
+export const register = (username: string, password: string) =>
+  post<{ pending: true }>('/api/auth/register', { username, password });
 export const logout = () => post<{ ok: true }>('/api/auth/logout');
 
 export interface Project {
@@ -167,6 +170,35 @@ export const testGitHub = (token?: string) =>
 
 /** Whether the sandbox image that project containers are created from has been built. */
 export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
+
+export interface RegistryEnvVar {
+  name: string;
+  description?: string;
+  isRequired: boolean;
+  isSecret: boolean;
+  default?: string;
+}
+export type RegistryInstall =
+  | { kind: 'npm'; identifier: string; version: string; env: RegistryEnvVar[] }
+  | { kind: 'remote'; url: string };
+export interface RegistryItem {
+  name: string;
+  title: string;
+  description: string;
+  version: string;
+  repository: string | null;
+  install: RegistryInstall | null;
+}
+/** Searches the official MCP registry through the panel. */
+export const searchRegistry = (q: string, cursor?: string) => {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (cursor) params.set('cursor', cursor);
+  const query = params.toString();
+  return request<{ items: RegistryItem[]; nextCursor: string | null }>(
+    `/api/mcp/registry${query ? `?${query}` : ''}`,
+  );
+};
 
 export type ReaBuildStatus = 'idle' | 'checking' | 'building' | 'done' | 'failed';
 export interface ReaState {
@@ -515,3 +547,25 @@ export const deleteSample = (projectId: number, name: string) =>
   request<void>(`/api/projects/${projectId}/samples/${encodeURIComponent(name)}`, {
     method: 'DELETE',
   });
+
+export interface AccountRow {
+  id: number;
+  username: string;
+  role: 'admin' | 'member';
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: number;
+}
+
+export const listAccounts = async (): Promise<AccountRow[]> => {
+  const res = await fetch('/api/admin/users');
+  const data = (await res.json()) as AccountRow[] & { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data;
+};
+export const approveAccount = (id: number) => post<{ ok: true }>(`/api/admin/users/${id}/approve`);
+export const rejectAccount = (id: number) => post<{ ok: true }>(`/api/admin/users/${id}/reject`);
+export const removeAccount = async (id: number) => {
+  const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+  const data = (await res.json()) as { error?: string };
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+};

@@ -1,15 +1,5 @@
 import { useEffect, useState } from 'react';
-import {
-  Badge,
-  Button,
-  Group,
-  Paper,
-  Stack,
-  Text,
-  TextInput,
-  Textarea,
-  Title,
-} from '@mantine/core';
+import { Badge, Button, Group, Paper, Stack, Text, TextInput, Textarea } from '@mantine/core';
 import {
   deleteMcpServer,
   discoverMcp,
@@ -23,12 +13,13 @@ import {
 } from './api.js';
 import { McpServerForm } from './McpServerForm.js';
 import { ReaBuilder } from './ReaBuilder.js';
+import { RegistryBrowser, registryNotes, registryPreset } from './RegistryBrowser.js';
 import { McpToolList } from './McpToolList.js';
-import { Collapsible, ErrorText, mono } from './ui.js';
+import { Collapsible, ErrorText, mono, PageHeader, Tip } from './ui.js';
 
 type Mode =
   | { kind: 'none' }
-  | { kind: 'form'; preset?: McpServerInput & { name: string } }
+  | { kind: 'form'; preset?: McpServerInput & { name: string }; notes?: string[] }
   | { kind: 'import' }
   | { kind: 'edit'; id: number };
 
@@ -121,12 +112,10 @@ export function McpServers() {
 
   return (
     <Stack>
-      <Title order={2}>MCP servers</Title>
-      <Text size="sm" c="dimmed" maw={640}>
-        Add servers here once, then switch them on per project. Command servers run inside the
-        project container with the agent&apos;s permissions, and any secrets you give them are
-        visible to the agent. Remote URL servers keep their own credentials.
-      </Text>
+      <PageHeader
+        title="MCP servers"
+        description="Add servers here once, then switch them on per project. Command servers run inside the project container with the agent's permissions, and any secrets you give them are visible to the agent. Remote URL servers keep their own credentials."
+      />
 
       {mode.kind === 'none' && reaPreset && (
         <ReaBuilder onAdd={() => setMode({ kind: 'form', preset: reaPreset.server })} />
@@ -138,33 +127,50 @@ export function McpServers() {
             Add:
           </Text>
           {presets.map((p) => (
-            <Button
-              key={p.id}
-              size="xs"
-              variant="light"
-              title={p.description}
-              onClick={() => setMode({ kind: 'form', preset: p.server })}
-            >
-              {p.title}
-            </Button>
+            <Tip key={p.id} label={p.description}>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => setMode({ kind: 'form', preset: p.server })}
+              >
+                {p.title}
+              </Button>
+            </Tip>
           ))}
-          <Button size="xs" variant="default" onClick={() => setMode({ kind: 'form' })}>
-            Custom&hellip;
-          </Button>
-          <Button size="xs" variant="default" onClick={() => setMode({ kind: 'import' })}>
-            Paste JSON&hellip;
-          </Button>
+          <Tip label="Describe any command or URL server yourself">
+            <Button size="xs" variant="default" onClick={() => setMode({ kind: 'form' })}>
+              Custom&hellip;
+            </Button>
+          </Tip>
+          <Tip label="Import an mcpServers config from Claude Desktop, Cursor and similar">
+            <Button size="xs" variant="default" onClick={() => setMode({ kind: 'import' })}>
+              Paste JSON&hellip;
+            </Button>
+          </Tip>
         </Group>
+      )}
+
+      {mode.kind === 'none' && (
+        <Collapsible title="Find servers in the MCP registry" defaultOpen={false}>
+          <RegistryBrowser
+            onAdd={(item) =>
+              setMode({
+                kind: 'form',
+                preset: registryPreset(item),
+                notes: registryNotes(item),
+              })
+            }
+          />
+        </Collapsible>
       )}
 
       {mode.kind === 'form' && (
         <Stack gap="xs">
-          {mode.preset &&
-            presetNotes(mode.preset).map((n) => (
-              <Text key={n} size="sm" c="orange">
-                {n}
-              </Text>
-            ))}
+          {(mode.notes ?? (mode.preset ? presetNotes(mode.preset) : [])).map((n) => (
+            <Text key={n} size="sm" c="orange">
+              {n}
+            </Text>
+          ))}
           <McpServerForm
             preset={mode.preset}
             onSaved={saved}
@@ -259,24 +265,26 @@ export function McpServers() {
                   </Text>
                 )}
                 <Group gap="xs" mt={4}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    disabled={testing !== null}
-                    onClick={() =>
-                      void act(async () => {
-                        setTesting(s.id);
-                        try {
-                          await discoverMcp(s.id);
-                        } finally {
-                          setTesting(null);
-                          await refresh();
-                        }
-                      })
-                    }
-                  >
-                    Test connection
-                  </Button>
+                  <Tip label="Starts the server and lists the tools it offers">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      disabled={testing !== null}
+                      onClick={() =>
+                        void act(async () => {
+                          setTesting(s.id);
+                          try {
+                            await discoverMcp(s.id);
+                          } finally {
+                            setTesting(null);
+                            await refresh();
+                          }
+                        })
+                      }
+                    >
+                      Test connection
+                    </Button>
+                  </Tip>
                   <Button
                     size="xs"
                     variant="subtle"

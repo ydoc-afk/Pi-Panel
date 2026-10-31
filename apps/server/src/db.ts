@@ -92,6 +92,11 @@ export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON');
   db.exec(SCHEMA);
+  // Accounts that exist before registration was added are the admin, so they default to approved.
+  addMissingColumns(db, 'users', {
+    role: "TEXT NOT NULL DEFAULT 'admin'",
+    status: "TEXT NOT NULL DEFAULT 'approved'",
+  });
   addMissingColumns(db, 'projects', { repo: 'TEXT' });
   addMissingColumns(db, 'mcp_servers', {
     image: 'TEXT',

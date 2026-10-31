@@ -1,15 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import {
-  Button,
-  Group,
-  Paper,
-  PasswordInput,
-  Select,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Button, Group, Paper, PasswordInput, Select, Stack, Text, TextInput } from '@mantine/core';
 import {
   createProvider,
   deleteProvider,
@@ -20,7 +10,7 @@ import {
   type Provider,
   type ProviderKind,
 } from './api.js';
-import { ErrorText } from './ui.js';
+import { ErrorText, PageHeader, Tip } from './ui.js';
 
 // Mirrors the server's rule for provider names.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
@@ -166,9 +156,11 @@ function ProviderForm({
           <Button type="submit" disabled={busy || !NAME_RE.test(name.trim())}>
             {initial ? 'Save' : 'Add provider'}
           </Button>
-          <Button variant="default" loading={testing} onClick={() => void testConnection()}>
-            Test connection
-          </Button>
+          <Tip label="Checks the address and key, and lists the models it offers">
+            <Button variant="default" loading={testing} onClick={() => void testConnection()}>
+              Test connection
+            </Button>
+          </Tip>
           {onCancel && (
             <Button type="button" variant="default" onClick={onCancel}>
               Cancel
@@ -209,7 +201,10 @@ export function Providers() {
 
   return (
     <Stack>
-      <Title order={2}>Providers</Title>
+      <PageHeader
+        title="Providers"
+        description="Where the agent gets its models. Keys are stored encrypted and never shown again."
+      />
       <Paper withBorder p="md" radius="md" maw={560}>
         <ProviderForm key={providers.length} onSaved={() => void refresh()} />
       </Paper>
@@ -245,21 +240,25 @@ export function Providers() {
                   </Text>
                 )}
                 <Group gap="xs" mt={4}>
-                  <Button
-                    size="xs"
-                    variant="light"
-                    onClick={() =>
-                      void act(async () => {
-                        const updated = await discoverModels(p.id);
-                        return `${p.name}: found ${updated.models.length} models`;
-                      })
-                    }
-                  >
-                    Discover models
-                  </Button>
-                  <Button size="xs" variant="subtle" onClick={() => setEditing(p.id)}>
-                    Edit
-                  </Button>
+                  <Tip label="Ask the provider which models it serves">
+                    <Button
+                      size="xs"
+                      variant="light"
+                      onClick={() =>
+                        void act(async () => {
+                          const updated = await discoverModels(p.id);
+                          return `${p.name}: found ${updated.models.length} models`;
+                        })
+                      }
+                    >
+                      Discover models
+                    </Button>
+                  </Tip>
+                  <Tip label="Change the address, key or models">
+                    <Button size="xs" variant="subtle" onClick={() => setEditing(p.id)}>
+                      Edit
+                    </Button>
+                  </Tip>
                   <Button
                     size="xs"
                     variant="subtle"

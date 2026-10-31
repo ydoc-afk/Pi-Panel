@@ -1,4 +1,5 @@
 import { ColorSwatch, Group, SegmentedControl, Select, useMantineColorScheme } from '@mantine/core';
+import { Tip } from './ui.js';
 import { ACCENTS, type Accent } from './theme.js';
 import { useAccent } from './ThemeRoot.js';
 
@@ -16,22 +17,26 @@ export function ColorControls() {
   const { accent, setAccent } = useAccent();
   return (
     <Group gap="xs" wrap="nowrap">
-      <Select
-        aria-label="Accent color"
-        size="xs"
-        w={130}
-        allowDeselect={false}
-        value={accent}
-        data={ACCENTS.map((a) => ({ value: a, label: label(a) }))}
-        leftSection={<ColorSwatch color={`var(--mantine-color-${accent}-6)`} size={12} />}
-        onChange={(v) => v && setAccent(v as Accent)}
-      />
-      <SegmentedControl
-        size="xs"
-        data={MODES}
-        value={colorScheme}
-        onChange={(v) => setColorScheme(v as 'light' | 'dark' | 'auto')}
-      />
+      <Tip label="Accent color">
+        <Select
+          aria-label="Accent color"
+          size="xs"
+          w={130}
+          allowDeselect={false}
+          value={accent}
+          data={ACCENTS.map((a) => ({ value: a, label: label(a) }))}
+          leftSection={<ColorSwatch color={`var(--mantine-color-${accent}-6)`} size={12} />}
+          onChange={(v) => v && setAccent(v as Accent)}
+        />
+      </Tip>
+      <Tip label="Light, dark, or follow your system">
+        <SegmentedControl
+          size="xs"
+          data={MODES}
+          value={colorScheme}
+          onChange={(v) => setColorScheme(v as 'light' | 'dark' | 'auto')}
+        />
+      </Tip>
     </Group>
   );
 }

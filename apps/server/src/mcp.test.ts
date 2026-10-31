@@ -220,7 +220,7 @@ describe('mcp', () => {
       const presets = (await t.call('GET', '/api/mcp/presets')).json()
         .presets as typeof MCP_PRESETS;
       expect(presets.map((p) => p.id)).toEqual(
-        expect.arrayContaining(['memory', 'filesystem', 'rea']),
+        expect.arrayContaining(['memory', 'filesystem', 'rea', 'firecrawl']),
       );
       for (const p of presets) {
         expect((await create({ ...p.server, name: `${p.id}-copy` })).statusCode, p.id).toBe(201);

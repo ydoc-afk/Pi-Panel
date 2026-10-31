@@ -144,9 +144,16 @@ export const DEFAULT_MEMORY_MB = 4096;
 /** Container image references: lowercase, no spaces; a tag or digest is optional. */
 const IMAGE_RE = /^[a-z0-9][a-z0-9._/:@-]{0,199}$/;
 
+/**
+ * Prefix for container and network names. Two panels on one Docker host (stable and nightly) each
+ * number their projects from 1, so they must not share names: a sidecar with the same name would be
+ * replaced by the other panel's.
+ */
+const NAMESPACE = process.env.PI_PANEL_NAMESPACE ?? '';
+
 export const sidecarName = (projectId: number, serverId: number) =>
-  `pp-mcp-${projectId}-${serverId}`;
-export const networkName = (projectId: number) => `pp-net-${projectId}`;
+  `${NAMESPACE}pp-mcp-${projectId}-${serverId}`;
+export const networkName = (projectId: number) => `${NAMESPACE}pp-net-${projectId}`;
 export const sidecarAlias = (serverId: number) => `mcp-${serverId}`;
 
 const NAME_RE = /^[A-Za-z0-9_-]{1,40}$/;

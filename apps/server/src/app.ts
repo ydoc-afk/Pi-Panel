@@ -17,6 +17,7 @@ import { SidecarManager, type SidecarOptions } from './sidecars.js';
 import { LabService, registerLab, type LabOptions } from './lab.js';
 import { PackageService, registerPackages, type PackageOptions } from './packages.js';
 import { ProviderStore, registerProviders } from './providers.js';
+import { registerMcpRegistry } from './mcp-registry.js';
 import { ReaBuilder, ReaBuildError } from './rea-build.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
@@ -96,6 +97,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerLab(app, lab);
     registerMcp(app, mcp);
     registerSamples(app, samples);
+    registerMcpRegistry(app, opts.fetch ?? fetch);
     registerSessions(app, sessions);
     // Lets the UI warn before a project is created when the sandbox image has not been built.
     app.get('/api/sandbox', async () => ({
