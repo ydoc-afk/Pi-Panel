@@ -14,18 +14,22 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
   IconFolder,
+  IconInfoCircle,
   IconKey,
+  IconLock,
   IconLogout,
   IconPlug,
   IconTerminal2,
   IconUsers,
 } from '@tabler/icons-react';
+import { AccountDialogs, type AccountDialog } from './AccountDialogs.js';
 import { AuthForm } from './AuthForm.js';
 import { ColorControls } from './ColorControls.js';
 import { GitHubAccount } from './GitHubAccount.js';
@@ -34,9 +38,8 @@ import { Projects } from './Projects.js';
 import { Providers } from './Providers.js';
 import { Users } from './Users.js';
 import { getStatus, listAccounts, logout, type AuthStatus, type User } from './api.js';
+import { navigate, useRoute, type Tab } from './router.js';
 import { Tip } from './ui.js';
-
-type Tab = 'projects' | 'providers' | 'mcp' | 'github' | 'users';
 
 const TABS: {
   value: Tab;
@@ -102,7 +105,8 @@ function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [tab, setTab] = useState<Tab>('projects');
+  const route = useRoute();
+  const [dialog, setDialog] = useState<AccountDialog>(null);
   const [navOpened, nav] = useDisclosure();
   const [pending, setPending] = useState(0);
 
@@ -113,6 +117,10 @@ export function App() {
   }, []);
 
   const isAdmin = status?.user?.role === 'admin';
+  // A member who follows a link to an admin page lands on Projects instead.
+  const tab: Tab = TABS.some((t) => t.value === route.tab && (isAdmin || !t.adminOnly))
+    ? route.tab
+    : 'projects';
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -144,7 +152,7 @@ export function App() {
   }
 
   const go = (t: Tab) => {
-    setTab(t);
+    navigate({ tab: t });
     nav.close();
   };
 
@@ -164,16 +172,31 @@ export function App() {
             <ColorControls />
             <Menu position="bottom-end" width={200}>
               <Menu.Target>
-                <Tip label="Account">
+                {/* Mantine's Tooltip passes the menu's click handler and ref through; the Tip
+                    wrapper's <span> does not, which left this menu impossible to open. */}
+                <Tooltip label="Account" openDelay={350} withArrow>
                   <UnstyledButton aria-label="Account menu">
                     <Avatar size="sm" color="initials" name={status.user.username} />
                   </UnstyledButton>
-                </Tip>
+                </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Label>
                   {status.user.username} · {status.user.role}
                 </Menu.Label>
+                <Menu.Item
+                  leftSection={<IconLock size={14} />}
+                  onClick={() => setDialog('password')}
+                >
+                  Change password
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconInfoCircle size={14} />}
+                  onClick={() => setDialog('about')}
+                >
+                  About
+                </Menu.Item>
+                <Menu.Divider />
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
                   onClick={() =>
@@ -211,13 +234,16 @@ export function App() {
 
       <AppShell.Main>
         <Container size="lg">
-          {tab === 'projects' && <Projects />}
+          {tab === 'projects' && (
+            <Projects projectId={route.projectId} sessionId={route.sessionId} />
+          )}
           {tab === 'providers' && <Providers />}
           {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}
           {tab === 'users' && isAdmin && <Users onChange={setPending} />}
         </Container>
       </AppShell.Main>
+      <AccountDialogs open={dialog} onClose={() => setDialog(null)} />
     </AppShell>
   );
 }
