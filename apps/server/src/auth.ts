@@ -218,6 +218,40 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     return { user: { id: row.id, username: row.username, role: row.role } };
   });
 
+  // Changing your password signs out every other browser that is signed in as you.
+  app.post('/api/auth/password', async (req, reply) => {
+    const user = currentUser(req);
+    if (!user) return reply.code(401).send({ error: 'Authentication required' });
+    const { current, next } = (req.body ?? {}) as { current?: unknown; next?: unknown };
+    if (typeof current !== 'string' || typeof next !== 'string') {
+      return reply.code(400).send({ error: 'current and next passwords are required' });
+    }
+    if (next.length < MIN_PASSWORD) {
+      return reply
+        .code(400)
+        .send({ error: `Password must be at least ${MIN_PASSWORD} characters` });
+    }
+    const wait = loginFailures.retryAfter(req.ip);
+    if (wait > 0) {
+      return reply
+        .code(429)
+        .header('retry-after', String(wait))
+        .send({ error: 'Too many failed attempts. Try again later.' });
+    }
+    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as
+      { password_hash: string } | undefined;
+    if (!row || !(await verify(row.password_hash, current))) {
+      loginFailures.fail(req.ip);
+      return reply.code(403).send({ error: 'Current password is wrong' });
+    }
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hash(next), user.id);
+    const mine = sha256(req.cookies[COOKIE] ?? '');
+    const ended = db
+      .prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?')
+      .run(user.id, mine).changes;
+    return { ok: true, signedOutOthers: Number(ended) };
+  });
+
   app.post('/api/auth/logout', async (req, reply) => {
     const token = req.cookies[COOKIE];
     if (token) db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(sha256(token));

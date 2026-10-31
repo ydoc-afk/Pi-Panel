@@ -1,15 +1,23 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Alert, Badge, Button, Group, Paper, Stack, Text, TextInput } from '@mantine/core';
 import { ProjectView } from './ProjectView.js';
-import { createProject, deleteProject, getSandbox, listProjects, type Project } from './api.js';
+import {
+  createProject,
+  deleteProject,
+  getSandbox,
+  listProjects,
+  restartProject,
+  type Project,
+} from './api.js';
+import { PROJECT_STATUS } from './projectStatus.js';
+import { navigate } from './router.js';
 import { ErrorText, PageHeader, Tip } from './ui.js';
 
-export function Projects() {
+export function Projects({ projectId, sessionId }: { projectId?: number; sessionId?: number }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<Project | null>(null);
   const [sandboxReady, setSandboxReady] = useState(true);
 
   const refresh = () =>
@@ -18,11 +26,12 @@ export function Projects() {
       .catch((e: Error) => setError(e.message));
 
   useEffect(() => {
+    if (projectId !== undefined) return;
     void refresh();
     getSandbox()
       .then((s) => setSandboxReady(s.available))
       .catch(() => setSandboxReady(true));
-  }, []);
+  }, [projectId]);
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -45,7 +54,15 @@ export function Projects() {
     });
   }
 
-  if (open) return <ProjectView project={open} onBack={() => setOpen(null)} />;
+  if (projectId !== undefined) {
+    return (
+      <ProjectView
+        projectId={projectId}
+        sessionId={sessionId}
+        onBack={() => navigate({ tab: 'projects' })}
+      />
+    );
+  }
 
   return (
     <Stack>
@@ -85,13 +102,28 @@ export function Projects() {
               <Group justify="space-between" wrap="nowrap">
                 <Group gap="sm" wrap="nowrap">
                   <Tip label="Open this project">
-                    <Button variant="subtle" onClick={() => setOpen(p)}>
+                    <Button
+                      variant="subtle"
+                      onClick={() => navigate({ tab: 'projects', projectId: p.id })}
+                    >
                       {p.name}
                     </Button>
                   </Tip>
-                  <Badge variant="light" color="gray">
-                    {p.status}
-                  </Badge>
+                  <Tip label={PROJECT_STATUS[p.status]?.hint ?? p.status}>
+                    <Badge variant="light" color={PROJECT_STATUS[p.status]?.color ?? 'gray'}>
+                      {p.status}
+                    </Badge>
+                  </Tip>
+                  {(p.status === 'stopped' || p.status === 'missing') && (
+                    <Button
+                      size="xs"
+                      variant="light"
+                      disabled={busy}
+                      onClick={() => void run(() => restartProject(p.id))}
+                    >
+                      Start
+                    </Button>
+                  )}
                 </Group>
                 <Tip label="Removes the container and its workspace files">
                   <Button

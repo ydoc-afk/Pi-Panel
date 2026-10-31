@@ -29,6 +29,17 @@ export const login = (username: string, password: string) =>
 export const register = (username: string, password: string) =>
   post<{ pending: true }>('/api/auth/register', { username, password });
 export const logout = () => post<{ ok: true }>('/api/auth/logout');
+export const changePassword = (current: string, next: string) =>
+  post<{ ok: true; signedOutOthers: number }>('/api/auth/password', { current, next });
+
+export interface SystemInfo {
+  panelVersion: string;
+  schema: number;
+  docker: boolean;
+  sandbox: { present: boolean; piVersion: string | null };
+}
+export const getSystem = async (): Promise<SystemInfo> =>
+  (await fetch('/api/system')).json() as Promise<SystemInfo>;
 
 export interface Project {
   id: number;
@@ -58,6 +69,12 @@ export const createProject = async (name: string) =>
   ).project;
 export const deleteProject = (id: number) =>
   request<void>(`/api/projects/${id}`, { method: 'DELETE' });
+export const getProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}`)).project;
+export const restartProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}/restart`, json({}))).project;
+export const recreateProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}/recreate`, json({}))).project;
 
 export interface Session {
   id: number;
@@ -90,9 +107,17 @@ export const createSession = async (
     .session;
 export const deleteSession = (id: number) =>
   request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
+export const renameSession = async (id: number, name: string) =>
+  (
+    await request<{ session: Session }>(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+  ).session;
 export const getSession = async (id: number) =>
   (await request<{ session: Session }>(`/api/sessions/${id}`)).session;
-export const sendPrompt = (id: number, message: string, streamingBehavior?: 'steer') =>
+export const sendPrompt = (id: number, message: string, streamingBehavior?: 'steer' | 'followUp') =>
   request<{ disposition?: string }>(
     `/api/sessions/${id}/prompt`,
     json({ message, streamingBehavior }),

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
@@ -47,6 +47,15 @@ export interface AppOptions {
   webDir?: string;
 }
 
+const PANEL_VERSION = (() => {
+  try {
+    const pkg = new URL('../package.json', import.meta.url);
+    return (JSON.parse(readFileSync(pkg, 'utf8')) as { version?: string }).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
+
 /** PI_PANEL_RUNTIME=fake runs without Docker (UI development, demos). */
 function defaultRuntime(): ContainerRuntime {
   return process.env.PI_PANEL_RUNTIME === 'fake' ? new FakeRuntime() : new DockerRuntime();
@@ -93,6 +102,7 @@ export function buildApp(opts: AppOptions = {}) {
         sessions.stopProject(id);
         await sidecars.removeProjectSidecars(id);
       },
+      beforeRestart: (id) => sessions.stopProject(id),
       afterRemove: async (id) => {
         await sidecars.removeProjectNetwork(id);
         await samples.removeProject(id);
@@ -110,6 +120,19 @@ export function buildApp(opts: AppOptions = {}) {
     app.get('/api/sandbox', async () => ({
       available: await runtime.hasSandboxImage(),
     }));
+    // Versions for the About box: the panel, its database schema, and the pi in the sandbox image.
+    app.get('/api/system', async () => {
+      const labels = await runtime.imageLabels('sandbox').catch(() => null);
+      return {
+        panelVersion: process.env.PI_PANEL_VERSION || PANEL_VERSION,
+        schema: schemaVersion(db),
+        docker: await runtime.ping().catch(() => false),
+        sandbox: {
+          present: labels !== null,
+          piVersion: labels?.['org.pi-panel.pi-version'] ?? null,
+        },
+      };
+    });
     app.get('/api/rea', () => rea.status());
     app.post('/api/rea/build', async (req, reply) => {
       try {
