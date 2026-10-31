@@ -21,8 +21,9 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 
 1. Run the real-pi tests against the new version (see `docs/mcp.md` and `docs/package-lab.md`).
 2. Bump `PI_VERSION`, rebuild the image (`docker compose --profile build-only build sandbox-base`).
-3. Recreate each project's container so it uses the new image. The workspace and pi's agent dir are
-   bind-mounted, so files and pi session history are kept.
+3. Press **Recreate container** on each project so it uses the new image. The workspace and pi's agent
+   dir are bind-mounted, so files and pi session history are kept. The About box (account menu) shows
+   the pi version the sandbox image was built with.
 
 ## What pi-facing surface we use
 
@@ -35,8 +36,9 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 
 ## Not built yet
 
-- A panel page showing installed vs latest pi and a one-click rebuild.
-- A `schema_version` migrations table (today new columns are added by a small helper in `db.ts`).
+- A one-click pi rebuild. The About box shows the installed version, but not the latest.
+- Schema changes are now numbered migrations in `db.ts` (recorded in `schema_migrations`); append new
+  ones rather than editing shipped ones.
 - Update checks and a diff-aware review (publisher change, new install scripts, new dependencies) for
   packages and MCP servers.
 - A panel update notice. Updating the panel itself is `docker compose pull && docker compose up -d`;
