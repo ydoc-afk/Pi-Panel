@@ -19,6 +19,13 @@ const DEFAULT_IMAGE = 'pi-panel/sandbox-base:latest';
 
 const MAX_LOG_BYTES = 1024 * 1024;
 
+/** Resource limits for project sandboxes; override with SANDBOX_MEMORY_MB and SANDBOX_CPUS. */
+export function sandboxLimits(env: NodeJS.ProcessEnv = process.env) {
+  const memoryMb = Number(env.SANDBOX_MEMORY_MB) > 0 ? Number(env.SANDBOX_MEMORY_MB) : 2048;
+  const cpus = Number(env.SANDBOX_CPUS) > 0 ? Number(env.SANDBOX_CPUS) : 2;
+  return { memoryBytes: Math.round(memoryMb * 1024 * 1024), nanoCpus: Math.round(cpus * 1e9) };
+}
+
 /**
  * Bind-mount sources are resolved by the Docker daemon on the host, but the panel normally runs in a
  * container where the data directory is mounted at another path. Translate a path under the panel's
@@ -60,11 +67,21 @@ export class DockerRuntime implements ContainerRuntime {
     this.image = opts.image ?? process.env.SANDBOX_IMAGE ?? DEFAULT_IMAGE;
   }
 
+  async ping(): Promise<boolean> {
+    try {
+      await this.docker.ping();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private hostPath(path: string): string {
     return toHostPath(path, process.env.DATA_DIR ?? './data', process.env.PI_PANEL_HOST_DATA_DIR);
   }
 
   async createAndStart(spec: ContainerSpec): Promise<string> {
+    const limits = sandboxLimits();
     const container = await this.docker.createContainer({
       Image: this.image,
       Labels: { 'pi-panel.project': String(spec.projectId) },
@@ -75,7 +92,9 @@ export class DockerRuntime implements ContainerRuntime {
         ],
         // Lets sandboxes reach model servers on the Docker host (llama.cpp, Unsloth) on Linux too.
         ExtraHosts: ['host.docker.internal:host-gateway'],
-        Memory: 2 * 1024 * 1024 * 1024,
+        Memory: limits.memoryBytes,
+        // One runaway build or test loop should not starve the panel and the other projects.
+        NanoCpus: limits.nanoCpus,
         PidsLimit: 512,
         CapDrop: ['ALL'],
         SecurityOpt: ['no-new-privileges'],

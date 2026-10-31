@@ -44,7 +44,7 @@ describe('serving the web UI', () => {
     const api = await app.inject({ url: '/api/nope' });
     expect(api.statusCode).toBe(401); // the auth guard answers first
     expect(api.headers['content-type']).toMatch(/json/);
-    expect((await app.inject({ url: '/api/health' })).json()).toEqual({ status: 'ok' });
+    expect((await app.inject({ url: '/api/health' })).json()).toMatchObject({ db: true });
     await app.close();
   });
 

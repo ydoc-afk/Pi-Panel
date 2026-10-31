@@ -10,6 +10,12 @@ services:
       # The Docker daemon resolves bind-mount paths on the host, so it must know where /data lives there.
       # Run `docker compose up` from the repository root so ${PWD}/data is the directory mounted below.
       PI_PANEL_HOST_DATA_DIR: ${PWD}/data
+      # Behind a reverse proxy (Caddy, Tailscale Serve, ...), set to 'true' so sign-in throttling sees
+      # real client addresses. Only do this when the proxy is the only way to reach the panel.
+      TRUST_PROXY: ${PI_PANEL_TRUST_PROXY:-false}
+      # Per-project sandbox limits.
+      SANDBOX_MEMORY_MB: ${PI_PANEL_SANDBOX_MEMORY_MB:-2048}
+      SANDBOX_CPUS: ${PI_PANEL_SANDBOX_CPUS:-2}
     volumes:
       - ./data:/data
       # The backend is the only component that talks to Docker (project sandboxes).

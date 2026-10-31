@@ -133,9 +133,19 @@ export class SessionManager {
     ).map((r) => ({ seq: r.seq, event: JSON.parse(r.data) as PiEvent }));
   }
 
-  /** Replays persisted events after `after`, then delivers live ones. Returns an unsubscribe fn. */
+  /**
+   * Replays every persisted event after `after`, then delivers live ones. Returns an unsubscribe fn.
+   * Replay pages through the whole backlog: a client reconnecting after a long gap must not miss
+   * events. It is synchronous, so nothing recorded meanwhile can slip between replay and live.
+   */
   subscribe(id: number, after: number, send: (m: StreamMessage) => void): () => void {
-    for (const m of this.events(id, after)) send(m);
+    let cursor = after;
+    for (;;) {
+      const page = this.events(id, cursor);
+      for (const m of page) send(m);
+      if (page.length < REPLAY_LIMIT) break;
+      cursor = page[page.length - 1]!.seq;
+    }
     let set = this.listeners.get(id);
     if (!set) this.listeners.set(id, (set = new Set()));
     set.add(send);

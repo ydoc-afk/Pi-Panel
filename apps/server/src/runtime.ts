@@ -72,6 +72,8 @@ export interface SidecarState {
 
 /** Container operations Pi-Panel needs; the Docker implementation is the only one that talks to Docker. */
 export interface ContainerRuntime {
+  /** Whether the container engine answers. */
+  ping(): Promise<boolean>;
   /** Creates and starts a sandbox container, returning its id. */
   createAndStart(spec: ContainerSpec): Promise<string>;
   /** Stops and removes the container. Must succeed if it is already gone. */
@@ -139,7 +141,13 @@ export class FakeRuntime implements ContainerRuntime {
     '{"level":30,"msg":"MCP transport listening","transport":"streamable-http"}\n';
   failNextCreate = false;
   fakePi: FakePiOptions = {};
+  /** Set to false to simulate an unreachable Docker daemon. */
+  reachable = true;
   private next = 1;
+
+  async ping(): Promise<boolean> {
+    return this.reachable;
+  }
 
   async createAndStart(spec: ContainerSpec): Promise<string> {
     if (this.failNextCreate) {
