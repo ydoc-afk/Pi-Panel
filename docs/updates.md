@@ -17,6 +17,13 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 - The sandbox base image is Node 24: current reference MCP servers require it, pi needs 22.19+, and
   REA needs 22.23.4+.
 
+## Schema changes
+
+The database schema is changed only by numbered migrations in `apps/server/src/db.ts`. Each runs once,
+in a transaction, and is recorded in `schema_migrations`; `/api/health` and the About box show the
+current number. Append new migrations; never edit or reorder ones that have shipped. Older code cannot
+read a newer schema, so rolling back across a migration means restoring the data backup as well.
+
 ## How to move to a newer pi
 
 1. Run the real-pi tests against the new version (see `docs/mcp.md` and `docs/package-lab.md`).
@@ -37,9 +44,8 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 ## Not built yet
 
 - A one-click pi rebuild. The About box shows the installed version, but not the latest.
-- Schema changes are now numbered migrations in `db.ts` (recorded in `schema_migrations`); append new
-  ones rather than editing shipped ones.
 - Update checks and a diff-aware review (publisher change, new install scripts, new dependencies) for
   packages and MCP servers.
-- A panel update notice. Updating the panel itself is `docker compose pull && docker compose up -d`;
-  keep the data directory and `secret.key` backed up together.
+- A panel update notice. Updating the panel itself is a rebuild from source (images are not published):
+  see [Updating](../README.md#updating) in the README. Keep the data directory and `secret.key` backed
+  up together.

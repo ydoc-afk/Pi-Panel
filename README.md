@@ -101,6 +101,30 @@ Optional: the REA reverse-engineering image needs a Ghidra release you choose an
 paste its download link and SHA-256 checksum and press **Build REA image**, or build it by hand (see
 [docs/rea.md](docs/rea.md)).
 
+### Updating
+
+Images are built from source, not published, so an update is a rebuild. Pick the branch you run
+(`main` for stable, `nightly` for the test channel; see [Branches and releases](#branches-and-releases)).
+
+```bash
+# 1. Stop the panel and back up ./data (it holds the database and secret.key, which belong together)
+docker compose stop pi-panel
+sudo cp -a data "data-backup-$(date +%Y%m%d-%H%M%S)"
+
+# 2. Get the new code and rebuild
+git pull
+docker compose up -d --build
+
+# 3. Check it came back (migrations run on start)
+curl -s localhost:3000/api/health   # {"status":"ok","db":true,"docker":true,"schema":N}
+```
+
+To roll back, check out the previous commit and rebuild. If the update added a migration (the `schema`
+number went up), also restore the data backup: the older code does not know the newer schema.
+
+After rebuilding the sandbox image (for example to move to a newer pi), press **Recreate container** on
+each project to use it. Workspaces and session history are kept.
+
 ## Development
 
 Requires Node 22.19 or newer.
@@ -115,6 +139,26 @@ npm run format:check && npm run typecheck && npm run lint && npm test && npm run
 
 `PI_PANEL_RUNTIME=fake` swaps Docker for an in-memory runtime with a scripted fake pi, so the whole UI
 works without containers.
+
+### Branches and releases
+
+| Branch    | What it is                                                        | Run it as             |
+| --------- | ----------------------------------------------------------------- | --------------------- |
+| `nightly` | Integration branch. Feature PRs land here first.                  | A test instance       |
+| `main`    | Stable. Changes arrive by promoting `nightly`, or as a hotfix PR. | The panel you rely on |
+
+- **Features:** branch from `nightly`, open the PR against `nightly`, try it on the test instance, then
+  promote with a `nightly` → `main` PR.
+- **Hotfixes:** branch from `main` and change only the fix, open the PR against `main`, then merge `main`
+  back into `nightly` with a PR right away so the two branches do not drift.
+- **Stacked PRs:** do not delete a branch that another open PR uses as its base; GitHub closes that PR.
+  Retarget the next PR to `nightly` first, then delete.
+- CI (lint, format, typecheck, tests, build, Docker images) runs on every PR and on pushes to `main` and
+  `nightly`.
+
+To run both on one host, give the test instance its own directory, port and data folder, and set
+`PI_PANEL_NAMESPACE` (for example `nightly-`) so its container and network names do not collide with the
+stable panel's. The two can share the sandbox and REA images.
 
 ### Tests against the real thing
 
