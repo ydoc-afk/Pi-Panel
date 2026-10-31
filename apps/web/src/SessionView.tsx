@@ -513,7 +513,12 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
               color="gray"
               leftSection={<IconDownload size={13} />}
               disabled={t.items.length === 0}
-              styles={{ root: { color: TERM.fg } }}
+              styles={{
+                root:
+                  t.items.length === 0
+                    ? { color: TERM.dim, background: 'transparent', opacity: 0.6 }
+                    : { color: TERM.fg },
+              }}
               onClick={() =>
                 download(
                   `${(name || `session-${sessionId}`).replace(/[^\w.-]+/g, '-')}.md`,
