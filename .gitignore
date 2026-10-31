@@ -3,3 +3,14 @@ dist/
 data/
 .env
 *.log
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage/
+.DS_Store
+.vscode/
+.idea/
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
