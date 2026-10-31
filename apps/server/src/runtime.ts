@@ -78,6 +78,12 @@ export interface ContainerRuntime {
   createAndStart(spec: ContainerSpec): Promise<string>;
   /** Stops and removes the container. Must succeed if it is already gone. */
   remove(containerId: string): Promise<void>;
+  /** Whether a sandbox container is running, stopped, or gone. */
+  containerState(containerId: string): Promise<SidecarState['state']>;
+  /** Starts a stopped sandbox container. */
+  start(containerId: string): Promise<void>;
+  /** Labels on a local image, or null if the image is absent. */
+  imageLabels(tag: string): Promise<Record<string, string> | null>;
   /** Starts a process in a running container with stdin/stdout/stderr attached. */
   exec(containerId: string, spec: ExecSpec): Promise<RunningProcess>;
   /** Runs a command to completion in a new throwaway container, then removes it. */
@@ -161,11 +167,35 @@ export class FakeRuntime implements ContainerRuntime {
 
   async remove(containerId: string): Promise<void> {
     this.containers.delete(containerId);
+    this.stopped.delete(containerId);
     for (const net of this.networks.values()) net.connected.delete(containerId);
   }
 
-  async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
+  /** Containers simulated as stopped (e.g. after a host reboot without a restart policy). */
+  readonly stopped = new Set<string>();
+
+  async containerState(containerId: string): Promise<SidecarState['state']> {
+    if (!this.containers.has(containerId)) return 'missing';
+    return this.stopped.has(containerId) ? 'exited' : 'running';
+  }
+
+  async start(containerId: string): Promise<void> {
     if (!this.containers.has(containerId)) throw new Error('fake runtime: no such container');
+    this.stopped.delete(containerId);
+  }
+
+  /** Labels reported for the sandbox image. */
+  sandboxLabels: Record<string, string> = { 'org.pi-panel.pi-version': '1.4.0' };
+
+  async imageLabels(tag: string): Promise<Record<string, string> | null> {
+    if (tag === 'sandbox') return this.sandboxImageAvailable ? this.sandboxLabels : null;
+    return this.images.has(tag) ? {} : null;
+  }
+
+  async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
+    if (!this.containers.has(containerId) || this.stopped.has(containerId)) {
+      throw new Error('fake runtime: container is not running');
+    }
     if (spec.cmd[0] !== 'pi') throw new Error(`fake runtime: unsupported command ${spec.cmd[0]}`);
     this.execs.push(spec);
     const proc = new FakePiProcess(spec.cmd.slice(1), {

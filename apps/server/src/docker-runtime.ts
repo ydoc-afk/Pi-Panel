@@ -119,6 +119,31 @@ export class DockerRuntime implements ContainerRuntime {
     }
   }
 
+  async containerState(containerId: string): Promise<SidecarState['state']> {
+    return (await this.sidecarState(containerId)).state;
+  }
+
+  async start(containerId: string): Promise<void> {
+    try {
+      await this.docker.getContainer(containerId).start();
+    } catch (err) {
+      // 304: already running.
+      if ((err as { statusCode?: number }).statusCode === 304) return;
+      throw err;
+    }
+  }
+
+  /** "sandbox" means the configured sandbox image. */
+  async imageLabels(tag: string): Promise<Record<string, string> | null> {
+    try {
+      const info = await this.docker.getImage(tag === 'sandbox' ? this.image : tag).inspect();
+      return info.Config?.Labels ?? {};
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return null;
+      throw err;
+    }
+  }
+
   async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
     const exec = await this.docker.getContainer(containerId).exec({
       Cmd: spec.cmd,

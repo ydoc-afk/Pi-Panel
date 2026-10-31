@@ -11,6 +11,8 @@ RUN apt-get update \
 ARG PI_PACKAGE=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.4.0
 RUN npm install -g --ignore-scripts ${PI_PACKAGE}@${PI_VERSION}
+# Read by the panel to show which pi version projects run (About box).
+LABEL org.pi-panel.pi-version=${PI_VERSION}
 
 # No update checks or telemetry from inside sandboxes.
 ENV PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0

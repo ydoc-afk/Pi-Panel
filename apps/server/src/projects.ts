@@ -33,6 +33,8 @@ export function registerProjects(
     beforeRemove?: (projectId: number) => void | Promise<void>;
     /** Called after the project container is gone, e.g. to remove its private network. */
     afterRemove?: (projectId: number) => void | Promise<void>;
+    /** Called before a container is restarted or replaced; running pi processes die with it. */
+    beforeRestart?: (projectId: number) => void | Promise<void>;
   },
 ) {
   const { db, runtime } = deps;
@@ -41,16 +43,97 @@ export function registerProjects(
   const find = (id: number) =>
     db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
 
-  app.get('/api/projects', async () => ({
-    projects: (
-      db.prepare('SELECT * FROM projects ORDER BY id').all() as unknown as ProjectRow[]
-    ).map(toDto),
-  }));
+  /**
+   * Brings a project's status in line with its container: Docker may have stopped it (host reboot,
+   * OOM) or someone may have removed it by hand, and the stored status would otherwise still say
+   * "running" while every session failed to start.
+   */
+  async function reconcile(row: ProjectRow): Promise<ProjectRow> {
+    if (!row.container_id || row.status === 'creating') return row;
+    let status: string;
+    try {
+      const state = await runtime.containerState(row.container_id);
+      status = state === 'running' ? 'running' : state === 'exited' ? 'stopped' : 'missing';
+    } catch {
+      return row; // Docker unreachable: keep what we know
+    }
+    if (status !== row.status) {
+      db.prepare('UPDATE projects SET status = ? WHERE id = ?').run(status, row.id);
+      return { ...row, status };
+    }
+    return row;
+  }
+
+  app.get('/api/projects', async () => {
+    const rows = db.prepare('SELECT * FROM projects ORDER BY id').all() as unknown as ProjectRow[];
+    return { projects: (await Promise.all(rows.map(reconcile))).map(toDto) };
+  });
 
   app.get<{ Params: { id: string } }>('/api/projects/:id', async (req, reply) => {
     const row = find(Number(req.params.id));
     if (!row) return reply.code(404).send({ error: 'Project not found' });
-    return { project: toDto(row) };
+    return { project: toDto(await reconcile(row)) };
+  });
+
+  async function createContainer(id: number): Promise<string> {
+    return runtime.createAndStart({
+      projectId: id,
+      workspacePath: workspaceFor(id),
+      agentDir: agentFor(id),
+    });
+  }
+
+  // Starts a stopped container, or makes a new one if it has gone missing.
+  app.post<{ Params: { id: string } }>('/api/projects/:id/restart', async (req, reply) => {
+    const id = Number(req.params.id);
+    const row = find(id);
+    if (!row) return reply.code(404).send({ error: 'Project not found' });
+    const current = await reconcile(row);
+    if (current.status === 'running') return { project: toDto(current) };
+    await deps.beforeRestart?.(id);
+    try {
+      if (current.container_id && current.status === 'stopped') {
+        await runtime.start(current.container_id);
+      } else {
+        const containerId = await createContainer(id);
+        db.prepare('UPDATE projects SET container_id = ? WHERE id = ?').run(containerId, id);
+      }
+    } catch (err) {
+      req.log.error({ err }, 'project restart failed');
+      return reply.code(502).send({ error: 'Failed to start the project container' });
+    }
+    db.prepare("UPDATE projects SET status = 'running' WHERE id = ?").run(id);
+    return { project: toDto(find(id)!) };
+  });
+
+  /**
+   * Replaces the container with a fresh one from the current sandbox image (e.g. after upgrading
+   * pi). The workspace and pi's agent dir are bind mounts, so files and session history are kept;
+   * anything installed inside the old container outside those is not.
+   */
+  app.post<{ Params: { id: string } }>('/api/projects/:id/recreate', async (req, reply) => {
+    const id = Number(req.params.id);
+    const row = find(id);
+    if (!row) return reply.code(404).send({ error: 'Project not found' });
+    await deps.beforeRestart?.(id);
+    try {
+      if (row.container_id) await runtime.remove(row.container_id);
+    } catch (err) {
+      req.log.error({ err }, 'container removal failed');
+      return reply.code(502).send({ error: 'Failed to remove the old container' });
+    }
+    db.prepare("UPDATE projects SET container_id = NULL, status = 'missing' WHERE id = ?").run(id);
+    try {
+      const containerId = await createContainer(id);
+      db.prepare("UPDATE projects SET container_id = ?, status = 'running' WHERE id = ?").run(
+        containerId,
+        id,
+      );
+    } catch (err) {
+      req.log.error({ err }, 'project recreate failed');
+      return reply.code(502).send({ error: 'Failed to create the new container' });
+    }
+    return { project: toDto(find(id)!) };
   });
 
   app.post('/api/projects', async (req, reply) => {
@@ -77,11 +160,7 @@ export function registerProjects(
         // The sandbox user needs write access; fall back to open permissions when we cannot chown.
         await chown(dir, SANDBOX_UID, SANDBOX_UID).catch(() => chmod(dir, 0o777));
       }
-      const containerId = await runtime.createAndStart({
-        projectId: id,
-        workspacePath,
-        agentDir: agentFor(id),
-      });
+      const containerId = await createContainer(id);
       db.prepare('UPDATE projects SET container_id = ?, status = ? WHERE id = ?').run(
         containerId,
         'running',
