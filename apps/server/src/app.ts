@@ -6,7 +6,8 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import type { DatabaseSync } from 'node:sqlite';
 import { registerAuth } from './auth.js';
-import { openDefaultDb } from './db.js';
+import { openDefaultDb, schemaVersion } from './db.js';
+import { registerGuards } from './guards.js';
 import { DockerRuntime } from './docker-runtime.js';
 import { GitHubService, registerGitHub, type GitHubOptions } from './github.js';
 import multipart from '@fastify/multipart';
@@ -52,7 +53,12 @@ function defaultRuntime(): ContainerRuntime {
 }
 
 export function buildApp(opts: AppOptions = {}) {
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+  const app = Fastify({
+    logger: process.env.NODE_ENV !== 'test',
+    // Behind a reverse proxy every client looks like the proxy; trust X-Forwarded-For to tell them
+    // apart (sign-in throttling is per address). Only enable when the proxy is the sole way in.
+    trustProxy: process.env.TRUST_PROXY === 'true',
+  });
   const db = opts.db ?? openDefaultDb();
   const dataDir = opts.dataDir ?? process.env.DATA_DIR ?? './data';
   const runtime = opts.runtime ?? defaultRuntime();
@@ -77,6 +83,7 @@ export function buildApp(opts: AppOptions = {}) {
     limits: { fileSize: limits.maxFileBytes, files: 1, fields: 0, parts: 1 },
   });
   app.after(() => {
+    registerGuards(app);
     registerAuth(app, db);
     registerProjects(app, {
       db,
@@ -121,7 +128,18 @@ export function buildApp(opts: AppOptions = {}) {
       return reply.type('text/plain; charset=utf-8').send(text);
     });
   });
-  app.get('/api/health', async () => ({ status: 'ok' }));
+  // Public, so container health checks can use it. The panel is healthy when its database answers;
+  // Docker being unreachable is reported but does not fail the check (the UI still works).
+  app.get('/api/health', async (_req, reply) => {
+    let schema: number;
+    try {
+      schema = schemaVersion(db);
+    } catch {
+      return reply.code(503).send({ status: 'error', db: false });
+    }
+    const docker = await runtime.ping().catch(() => false);
+    return { status: docker ? 'ok' : 'degraded', db: true, docker, schema };
+  });
 
   // Serve the built UI (production image). Unknown non-API paths get index.html so client-side
   // navigation works; /api/* keeps returning JSON errors.
