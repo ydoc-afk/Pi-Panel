@@ -17,6 +17,23 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 - The sandbox base image is Node 24: current reference MCP servers require it, pi needs 22.19+, and
   REA needs 22.23.4+.
 
+## Updating the panel
+
+The panel updates itself from the **Updates** page through the `updater` container
+(`apps/server/src/updater.ts`, entry point `updater-main.ts`). See [Updating](../README.md#updating) for
+what it checks and does. Points worth knowing:
+
+- **The checkout is the source of truth.** The updater moves the host's git checkout with `git merge
+--ff-only` (or checks out the other channel) and builds with `docker compose`, so a later manual
+  `git pull && docker compose up -d --build` carries on from the same place. Git runs as the owner of
+  the checkout, so it stays editable from the host.
+- **Only a channel's tip is installed**, and only the one the admin was shown: if the branch moved in
+  between, the update is refused.
+- **The image of the previous build is kept** as `<image>:pp-previous`, so going back does not need a
+  rebuild. Backups in `data/backups/` keep the newest five the updater made.
+- **The running commit** is baked into the image as `PI_PANEL_COMMIT` and shown on the Updates page.
+  Images built by hand show it as unknown.
+
 ## Schema changes
 
 The database schema is changed only by numbered migrations in `apps/server/src/db.ts`. Each runs once,
@@ -46,6 +63,5 @@ read a newer schema, so rolling back across a migration means restoring the data
 - A one-click pi rebuild. The About box shows the installed version, but not the latest.
 - Update checks and a diff-aware review (publisher change, new install scripts, new dependencies) for
   packages and MCP servers.
-- A panel update notice. Updating the panel itself is a rebuild from source (images are not published):
-  see [Updating](../README.md#updating) in the README. Keep the data directory and `secret.key` backed
-  up together.
+- An update for the updater itself. The panel image is rebuilt on each update, but the `updater` image
+  only when you run `docker compose up -d --build` on the host; its code changes rarely.

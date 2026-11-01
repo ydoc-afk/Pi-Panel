@@ -7,6 +7,7 @@ import websocket from '@fastify/websocket';
 import type { DatabaseSync } from 'node:sqlite';
 import { registerAuth } from './auth.js';
 import { registerDashboard } from './dashboard.js';
+import { registerUpdates } from './updates.js';
 import { openDefaultDb, schemaVersion } from './db.js';
 import { registerGuards } from './guards.js';
 import { DockerRuntime } from './docker-runtime.js';
@@ -118,6 +119,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerMcpRegistry(app, opts.fetch ?? fetch);
     registerSessions(app, sessions);
     registerDashboard(app, { db, runtime, providers, mcp: mcpStore, github });
+    registerUpdates(app, { db, dataDir, fetch: opts.fetch });
     // Lets the UI warn before a project is created when the sandbox image has not been built.
     app.get('/api/sandbox', async () => ({
       available: await runtime.hasSandboxImage(),
