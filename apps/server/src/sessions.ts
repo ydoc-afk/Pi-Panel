@@ -355,8 +355,10 @@ export class SessionManager {
     const seq = this.nextSeq(id);
     if (!EPHEMERAL.has(event.type)) {
       this.db
-        .prepare('INSERT INTO session_events (session_id, seq, data) VALUES (?, ?, ?)')
-        .run(id, seq, JSON.stringify(event));
+        .prepare(
+          'INSERT INTO session_events (session_id, seq, data, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(id, seq, JSON.stringify(event), Date.now());
     }
     if (event.type === 'agent_start') this.setStatus(id, 'running');
     else if (event.type === 'agent_settled') this.setStatus(id, 'idle');

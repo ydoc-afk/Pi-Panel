@@ -101,9 +101,18 @@ function SessionItem({
   );
 }
 
-export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
+export function ProjectView({
+  project,
+  initialSession,
+  onBack,
+}: {
+  project: Project;
+  /** A session to open straight away. */
+  initialSession?: number;
+  onBack: () => void;
+}) {
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(initialSession ?? null);
   const [error, setError] = useState('');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [choice, setChoice] = useState('');

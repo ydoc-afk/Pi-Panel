@@ -81,6 +81,23 @@ export function routePath(req: FastifyRequest): string {
   }
 }
 
+/** The signed-in, approved user behind a request, or null. */
+export function currentUser(db: DatabaseSync, req: FastifyRequest): SessionUser | null {
+  const token = req.cookies[COOKIE];
+  if (!token) return null;
+  const row = db
+    .prepare(
+      `SELECT u.id, u.username, u.role, u.status, s.expires_at FROM auth_sessions s
+       JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
+    )
+    .get(sha256(token)) as
+    | { id: number; username: string; role: Role; status: AccountStatus; expires_at: number }
+    | undefined;
+  // A session stops working the moment its account is no longer approved.
+  if (!row || row.expires_at < Date.now() || row.status !== 'approved') return null;
+  return { id: row.id, username: row.username, role: row.role };
+}
+
 export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   const secure = process.env.COOKIE_SECURE === 'true';
 
@@ -103,25 +120,9 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     });
   }
 
-  function currentUser(req: FastifyRequest): SessionUser | null {
-    const token = req.cookies[COOKIE];
-    if (!token) return null;
-    const row = db
-      .prepare(
-        `SELECT u.id, u.username, u.role, u.status, s.expires_at FROM auth_sessions s
-         JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
-      )
-      .get(sha256(token)) as
-      | { id: number; username: string; role: Role; status: AccountStatus; expires_at: number }
-      | undefined;
-    // A session stops working the moment its account is no longer approved.
-    if (!row || row.expires_at < Date.now() || row.status !== 'approved') return null;
-    return { id: row.id, username: row.username, role: row.role };
-  }
-
   app.get('/api/auth/status', async (req) => ({
     setupRequired: userCount() === 0,
-    user: currentUser(req),
+    user: currentUser(db, req),
   }));
 
   app.post('/api/auth/setup', async (req, reply) => {
@@ -201,7 +202,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   });
 
   const adminOnly = (req: FastifyRequest, reply: FastifyReply) => {
-    if (currentUser(req)?.role !== 'admin') {
+    if (currentUser(db, req)?.role !== 'admin') {
       reply.code(403).send({ error: 'Admin only' });
       return false;
     }
@@ -256,7 +257,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     const path = routePath(req);
     if (!path.startsWith('/api/') || path === '/api/health' || path.startsWith('/api/auth/'))
       return;
-    const user = currentUser(req);
+    const user = currentUser(db, req);
     if (!user) return reply.code(401).send({ error: 'Authentication required' });
     if (user.role !== 'admin' && memberBlocked(req.method, path)) {
       return reply.code(403).send({ error: 'Only the admin can do that' });

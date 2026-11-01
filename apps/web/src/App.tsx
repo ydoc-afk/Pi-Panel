@@ -24,6 +24,7 @@ import {
   IconBrandGithub,
   IconFolder,
   IconKey,
+  IconLayoutDashboard,
   IconLogout,
   IconPlug,
   IconTerminal2,
@@ -31,6 +32,8 @@ import {
 } from '@tabler/icons-react';
 import { AuthForm } from './AuthForm.js';
 import { ColorControls } from './ColorControls.js';
+import { Dashboard } from './dashboard/Dashboard.js';
+import type { DashboardNav } from './dashboard/widgets.js';
 import { GitHubAccount } from './GitHubAccount.js';
 import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
@@ -38,7 +41,7 @@ import { Providers } from './Providers.js';
 import { Users } from './Users.js';
 import { getStatus, listAccounts, logout, type AuthStatus, type User } from './api.js';
 
-type Tab = 'projects' | 'providers' | 'mcp' | 'github' | 'users';
+type Tab = 'dashboard' | 'projects' | 'providers' | 'mcp' | 'github' | 'users';
 
 const SECTIONS = [
   { id: 'workspace', label: 'Workspace' },
@@ -53,6 +56,13 @@ const TABS: {
   adminOnly?: boolean;
   section: 'workspace' | 'admin';
 }[] = [
+  {
+    value: 'dashboard',
+    label: 'Dashboard',
+    hint: 'Activity and health at a glance',
+    icon: IconLayoutDashboard,
+    section: 'workspace',
+  },
   {
     value: 'projects',
     label: 'Projects',
@@ -121,7 +131,11 @@ function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [tab, setTab] = useState<Tab>('projects');
+  const [tab, setTab] = useState<Tab>('dashboard');
+  // A project (and session) to open when switching to the Projects tab from the dashboard.
+  const [focus, setFocus] = useState<{ projectId: number; sessionId?: number; n: number } | null>(
+    null,
+  );
   const [navOpened, nav] = useDisclosure();
   const [pending, setPending] = useState(0);
 
@@ -170,7 +184,16 @@ export function App() {
 
   const go = (t: Tab) => {
     setTab(t);
+    setFocus(null);
     nav.close();
+  };
+
+  const dashboardNav: DashboardNav = {
+    openProject: (projectId, sessionId) => {
+      setFocus((f) => ({ projectId, sessionId, n: (f?.n ?? 0) + 1 }));
+      setTab('projects');
+    },
+    goTo: (t) => go(t),
   };
 
   return (
@@ -265,7 +288,15 @@ export function App() {
 
       <AppShell.Main className="pp-main">
         <Container size="xl" px={0}>
-          {tab === 'projects' && <Projects />}
+          {tab === 'dashboard' && (
+            <Dashboard userId={status.user.id} isAdmin={isAdmin} nav={dashboardNav} />
+          )}
+          {tab === 'projects' && (
+            <Projects
+              key={focus ? `focus-${focus.n}` : 'list'}
+              focus={focus ? { projectId: focus.projectId, sessionId: focus.sessionId } : undefined}
+            />
+          )}
           {tab === 'providers' && <Providers />}
           {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}

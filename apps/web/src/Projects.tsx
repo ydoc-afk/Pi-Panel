@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ActionIcon,
   Alert,
@@ -93,7 +93,12 @@ function ProjectCard({
   );
 }
 
-export function Projects() {
+export function Projects({
+  focus,
+}: {
+  /** Opens this project (and session) once the list has loaded, e.g. from the dashboard. */
+  focus?: { projectId: number; sessionId?: number };
+} = {}) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
@@ -101,9 +106,19 @@ export function Projects() {
   const [open, setOpen] = useState<Project | null>(null);
   const [sandboxReady, setSandboxReady] = useState(true);
 
+  const focused = useRef(false);
+
   const refresh = () =>
     listProjects()
-      .then(setProjects)
+      .then((list) => {
+        setProjects(list);
+        // Open the requested project the first time the list arrives, and only then.
+        if (focus && !focused.current) {
+          focused.current = true;
+          const match = list.find((p) => p.id === focus.projectId);
+          if (match) setOpen(match);
+        }
+      })
       .catch((e: Error) => setError(e.message));
 
   useEffect(() => {
@@ -134,7 +149,15 @@ export function Projects() {
     });
   }
 
-  if (open) return <ProjectView project={open} onBack={() => setOpen(null)} />;
+  if (open) {
+    return (
+      <ProjectView
+        project={open}
+        initialSession={open.id === focus?.projectId ? focus.sessionId : undefined}
+        onBack={() => setOpen(null)}
+      />
+    );
+  }
 
   return (
     <Stack gap="lg">

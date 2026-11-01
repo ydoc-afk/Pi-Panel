@@ -110,6 +110,9 @@ export function openDb(path: string): DatabaseSync {
     provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
     model_id: 'TEXT',
   });
+  // When each event was recorded, for the dashboard's activity charts. Older rows stay NULL.
+  addMissingColumns(db, 'session_events', { created_at: 'INTEGER' });
+  db.exec('CREATE INDEX IF NOT EXISTS session_events_created ON session_events (created_at)');
   return db;
 }
 
