@@ -1,0 +1,169 @@
+/* Global touches the Mantine theme cannot express. Colours come from Mantine's CSS variables. */
+
+:root {
+  --pp-app-bg: #f5f7fa;
+  --pp-mark-muted: var(--mantine-color-gray-4);
+  --pp-grid-cell: color-mix(in srgb, var(--mantine-primary-color-filled) 7%, transparent);
+  --pp-surface-hover: var(--mantine-color-gray-0);
+  --pp-glow: color-mix(in srgb, var(--mantine-primary-color-filled) 16%, transparent);
+}
+
+:root[data-mantine-color-scheme='dark'] {
+  --pp-app-bg: var(--mantine-color-dark-8);
+  --pp-mark-muted: var(--mantine-color-dark-3);
+  --pp-grid-cell: color-mix(in srgb, var(--mantine-primary-color-filled) 10%, transparent);
+  --pp-surface-hover: var(--mantine-color-dark-5);
+  --pp-glow: color-mix(in srgb, var(--mantine-primary-color-filled) 22%, transparent);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: 'cv11', 'ss01';
+  text-rendering: optimizeLegibility;
+}
+
+/* The main area sits a shade behind the cards so they read as surfaces. */
+.pp-main {
+  background: var(--pp-app-bg);
+  min-height: 100dvh;
+}
+
+/* Header with a translucent backdrop, so content scrolls softly beneath it. */
+.pp-header {
+  background: color-mix(in srgb, var(--mantine-color-body) 82%, transparent);
+  backdrop-filter: saturate(160%) blur(10px);
+}
+
+/* Labels between groups of links in the sidebar. */
+.pp-nav-section {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mantine-color-dimmed);
+  padding: 14px 12px 6px;
+}
+
+/* Cards that lift slightly on hover. */
+.pp-lift {
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+}
+.pp-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+  border-color: color-mix(
+    in srgb,
+    var(--mantine-primary-color-filled) 45%,
+    var(--mantine-color-default-border)
+  );
+}
+
+/* A button whose click area covers its whole card ("stretched link"). Other controls in the card
+   need position: relative and a z-index to stay clickable above it. */
+.pp-stretched::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.pp-above {
+  position: relative;
+  z-index: 1;
+}
+
+/* The signed-out page: a soft wash of the accent colour behind the form. */
+.pp-auth-bg {
+  min-height: 100dvh;
+  background:
+    radial-gradient(60rem 30rem at 15% -10%, var(--pp-glow), transparent 70%),
+    radial-gradient(50rem 30rem at 110% 110%, var(--pp-glow), transparent 70%), var(--pp-app-bg);
+}
+
+/* Dashboard ---------------------------------------------------------------------------------- */
+
+/* A clickable list row: a soft wash on hover and a clear focus ring. */
+.pp-row {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--mantine-radius-md);
+  transition: background-color 120ms ease;
+}
+.pp-row:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+/* A chart column: the whole slot is the hover and focus target, not just the bar. */
+.pp-column {
+  border-radius: 6px;
+  outline-offset: -2px;
+}
+.pp-column:hover,
+.pp-column:focus-visible {
+  background: var(--mantine-color-default-hover);
+}
+
+/* The grid's cells show only while customizing, so it is clear where widgets snap to. */
+.pp-grid-bg {
+  pointer-events: none;
+}
+
+.pp-widget-editing {
+  border-style: dashed;
+  border-color: color-mix(
+    in srgb,
+    var(--mantine-primary-color-filled) 55%,
+    var(--mantine-color-default-border)
+  );
+}
+.pp-drag-handle {
+  cursor: grab;
+  user-select: none;
+}
+.react-draggable-dragging .pp-drag-handle {
+  cursor: grabbing;
+}
+.react-draggable-dragging .pp-widget {
+  box-shadow: var(--mantine-shadow-md);
+}
+
+/* Where a widget will land while it is dragged or resized. */
+.react-grid-item.react-grid-placeholder {
+  background: var(--mantine-primary-color-filled);
+  opacity: 0.18;
+  border-radius: var(--mantine-radius-lg);
+}
+
+/* The resize grip: a small corner mark in the dimmed ink, always visible while customizing. */
+.pp-grid-editing .react-grid-item > .react-resizable-handle {
+  opacity: 1;
+  width: 22px;
+  height: 22px;
+  z-index: 2;
+}
+.react-grid-item > .react-resizable-handle::after {
+  right: 6px;
+  bottom: 6px;
+  width: 7px;
+  height: 7px;
+  border-right: 2px solid var(--mantine-color-dimmed);
+  border-bottom: 2px solid var(--mantine-color-dimmed);
+}
+
+/* Quieter scrollbars that match both schemes. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--mantine-color-default-border) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pp-lift,
+  .pp-lift:hover {
+    transition: none;
+    transform: none;
+  }
+}

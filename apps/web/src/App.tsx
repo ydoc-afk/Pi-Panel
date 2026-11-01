@@ -4,12 +4,14 @@ import {
   Burger,
   Avatar,
   Badge,
+  Box,
   Center,
   Container,
   Group,
   Loader,
   Menu,
   NavLink,
+  ScrollArea,
   Stack,
   Text,
   ThemeIcon,
@@ -23,6 +25,7 @@ import {
   IconFolder,
   IconInfoCircle,
   IconKey,
+  IconLayoutDashboard,
   IconLock,
   IconLogout,
   IconPlug,
@@ -32,6 +35,8 @@ import {
 import { AccountDialogs, type AccountDialog } from './AccountDialogs.js';
 import { AuthForm } from './AuthForm.js';
 import { ColorControls } from './ColorControls.js';
+import { Dashboard } from './dashboard/Dashboard.js';
+import type { DashboardNav } from './dashboard/widgets.js';
 import { GitHubAccount } from './GitHubAccount.js';
 import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
@@ -39,7 +44,11 @@ import { Providers } from './Providers.js';
 import { Users } from './Users.js';
 import { getStatus, listAccounts, logout, type AuthStatus, type User } from './api.js';
 import { navigate, useRoute, type Tab } from './router.js';
-import { Tip } from './ui.js';
+
+const SECTIONS = [
+  { id: 'workspace', label: 'Workspace' },
+  { id: 'admin', label: 'Administration' },
+] as const;
 
 const TABS: {
   value: Tab;
@@ -47,14 +56,29 @@ const TABS: {
   hint: string;
   icon: typeof IconFolder;
   adminOnly?: boolean;
+  section: 'workspace' | 'admin';
 }[] = [
-  { value: 'projects', label: 'Projects', hint: 'Workspaces and agent sessions', icon: IconFolder },
+  {
+    value: 'dashboard',
+    label: 'Dashboard',
+    hint: 'Activity and health at a glance',
+    icon: IconLayoutDashboard,
+    section: 'workspace',
+  },
+  {
+    value: 'projects',
+    label: 'Projects',
+    hint: 'Workspaces and agent sessions',
+    icon: IconFolder,
+    section: 'workspace',
+  },
   {
     value: 'providers',
     label: 'Providers',
     hint: 'Model providers and API keys',
     icon: IconKey,
     adminOnly: true,
+    section: 'admin',
   },
   {
     value: 'mcp',
@@ -62,6 +86,7 @@ const TABS: {
     hint: 'Tool servers the agent can use',
     icon: IconPlug,
     adminOnly: true,
+    section: 'admin',
   },
   {
     value: 'github',
@@ -69,6 +94,7 @@ const TABS: {
     hint: 'Account used to clone and push',
     icon: IconBrandGithub,
     adminOnly: true,
+    section: 'admin',
   },
   {
     value: 'users',
@@ -76,6 +102,7 @@ const TABS: {
     hint: 'Approve or remove accounts',
     icon: IconUsers,
     adminOnly: true,
+    section: 'admin',
   },
 ];
 
@@ -84,13 +111,14 @@ function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
     <Group gap="xs" wrap="nowrap">
       <ThemeIcon
         variant="gradient"
-        gradient={{ from: 'teal', to: 'cyan' }}
-        size={size === 'lg' ? 40 : 30}
+        gradient={{ from: 'var(--mantine-primary-color-filled)', to: 'cyan', deg: 135 }}
+        size={size === 'lg' ? 44 : 32}
+        radius="md"
       >
-        <IconTerminal2 size={size === 'lg' ? 24 : 18} />
+        <IconTerminal2 size={size === 'lg' ? 26 : 19} stroke={1.8} />
       </ThemeIcon>
       <Stack gap={0}>
-        <Title order={size === 'lg' ? 2 : 4} lh={1.1}>
+        <Title order={size === 'lg' ? 2 : 4} lh={1.1} style={{ letterSpacing: '-0.02em' }}>
           Pi-Panel
         </Title>
         {size === 'lg' && (
@@ -117,10 +145,10 @@ export function App() {
   }, []);
 
   const isAdmin = status?.user?.role === 'admin';
-  // A member who follows a link to an admin page lands on Projects instead.
+  // A member who follows a link to an admin page lands on the dashboard instead.
   const tab: Tab = TABS.some((t) => t.value === route.tab && (isAdmin || !t.adminOnly))
     ? route.tab
-    : 'projects';
+    : 'dashboard';
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -141,13 +169,19 @@ export function App() {
 
   if (!status.user) {
     return (
-      <Container size="xs" py="xl">
-        <Group justify="space-between" mb="xl">
-          <Brand size="lg" />
+      <Box className="pp-auth-bg">
+        <Group justify="flex-end" p="md">
           <ColorControls />
         </Group>
-        <AuthForm setup={status.setupRequired} onAuthed={authed} />
-      </Container>
+        <Container size={440} pb="xl" pt={{ base: 0, sm: 'xl' }}>
+          <Stack gap="xl">
+            <Center>
+              <Brand size="lg" />
+            </Center>
+            <AuthForm setup={status.setupRequired} onAuthed={authed} />
+          </Stack>
+        </Container>
+      </Box>
     );
   }
 
@@ -156,34 +190,48 @@ export function App() {
     nav.close();
   };
 
+  const dashboardNav: DashboardNav = {
+    openProject: (projectId, sessionId) => navigate({ tab: 'projects', projectId, sessionId }),
+    goTo: (t) => go(t),
+  };
+
   return (
     <AppShell
-      header={{ height: 56 }}
-      navbar={{ width: 200, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
-      padding="md"
+      header={{ height: 60 }}
+      navbar={{ width: 236, breakpoint: 'sm', collapsed: { mobile: !navOpened } }}
+      padding={{ base: 'md', md: 'xl' }}
     >
-      <AppShell.Header>
+      <AppShell.Header className="pp-header">
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
             <Burger opened={navOpened} onClick={nav.toggle} hiddenFrom="sm" size="sm" />
             <Brand />
           </Group>
-          <Group gap="md" wrap="nowrap">
+          <Group gap="sm" wrap="nowrap">
             <ColorControls />
-            <Menu position="bottom-end" width={200}>
+            <Menu position="bottom-end" width={220} radius="md" shadow="md">
               <Menu.Target>
                 {/* Mantine's Tooltip passes the menu's click handler and ref through; the Tip
                     wrapper's <span> does not, which left this menu impossible to open. */}
                 <Tooltip label="Account" openDelay={350} withArrow>
                   <UnstyledButton aria-label="Account menu">
-                    <Avatar size="sm" color="initials" name={status.user.username} />
+                    <Avatar size={34} radius="md" color="initials" name={status.user.username} />
                   </UnstyledButton>
                 </Tooltip>
               </Menu.Target>
               <Menu.Dropdown>
-                <Menu.Label>
-                  {status.user.username} · {status.user.role}
-                </Menu.Label>
+                <Group gap="sm" px="sm" py={8} wrap="nowrap">
+                  <Avatar size={36} radius="md" color="initials" name={status.user.username} />
+                  <Stack gap={0} style={{ minWidth: 0 }}>
+                    <Text size="sm" fw={600} truncate>
+                      {status.user.username}
+                    </Text>
+                    <Text size="xs" c="dimmed" tt="capitalize">
+                      {status.user.role}
+                    </Text>
+                  </Stack>
+                </Group>
+                <Menu.Divider />
                 <Menu.Item
                   leftSection={<IconLock size={14} />}
                   onClick={() => setDialog('password')}
@@ -211,29 +259,50 @@ export function App() {
         </Group>
       </AppShell.Header>
 
-      <AppShell.Navbar p="xs">
-        {TABS.filter((t) => isAdmin || !t.adminOnly).map((t) => (
-          <Tip key={t.value} label={t.hint}>
-            <NavLink
-              label={t.label}
-              w="100%"
-              leftSection={<t.icon size={18} stroke={1.6} />}
-              rightSection={
-                t.value === 'users' && pending > 0 ? (
-                  <Badge size="sm" circle color="orange">
-                    {pending}
-                  </Badge>
-                ) : null
-              }
-              active={tab === t.value}
-              onClick={() => go(t.value)}
-            />
-          </Tip>
-        ))}
+      <AppShell.Navbar p="sm">
+        <AppShell.Section grow component={ScrollArea}>
+          {SECTIONS.map((section) => {
+            const items = TABS.filter((t) => t.section === section.id && (isAdmin || !t.adminOnly));
+            if (items.length === 0) return null;
+            return (
+              <Box key={section.id} mb={4}>
+                <div className="pp-nav-section">{section.label}</div>
+                {items.map((t) => (
+                  <Tooltip
+                    key={t.value}
+                    label={t.hint}
+                    position="right"
+                    openDelay={500}
+                    events={{ hover: true, focus: false, touch: false }}
+                  >
+                    <NavLink
+                      label={t.label}
+                      fw={500}
+                      leftSection={<t.icon size={18} stroke={1.6} />}
+                      rightSection={
+                        t.value === 'users' && pending > 0 ? (
+                          <Badge size="sm" circle color="orange">
+                            {pending}
+                          </Badge>
+                        ) : null
+                      }
+                      active={tab === t.value}
+                      aria-current={tab === t.value ? 'page' : undefined}
+                      onClick={() => go(t.value)}
+                    />
+                  </Tooltip>
+                ))}
+              </Box>
+            );
+          })}
+        </AppShell.Section>
       </AppShell.Navbar>
 
-      <AppShell.Main>
-        <Container size="lg">
+      <AppShell.Main className="pp-main">
+        <Container size="xl" px={0}>
+          {tab === 'dashboard' && (
+            <Dashboard userId={status.user.id} isAdmin={isAdmin} nav={dashboardNav} />
+          )}
           {tab === 'projects' && (
             <Projects projectId={route.projectId} sessionId={route.sessionId} />
           )}

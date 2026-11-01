@@ -124,6 +124,16 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
     up: (db) =>
       db.exec('CREATE INDEX IF NOT EXISTS auth_sessions_expires ON auth_sessions (expires_at)'),
   },
+  {
+    // When each event was recorded, for the dashboard's activity charts. Older rows stay NULL.
+    // Idempotent, because stable panels added this column before they had migrations.
+    version: 3,
+    name: 'record when session events were stored',
+    up: (db) => {
+      addMissingColumns(db, 'session_events', { created_at: 'INTEGER' });
+      db.exec('CREATE INDEX IF NOT EXISTS session_events_created ON session_events (created_at)');
+    },
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {

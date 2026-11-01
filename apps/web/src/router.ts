@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type Tab = 'projects' | 'providers' | 'mcp' | 'github' | 'users';
+export type Tab = 'dashboard' | 'projects' | 'providers' | 'mcp' | 'github' | 'users';
 
 export interface Route {
   tab: Tab;
@@ -8,12 +8,12 @@ export interface Route {
   sessionId?: number;
 }
 
-const TABS: Tab[] = ['projects', 'providers', 'mcp', 'github', 'users'];
+const TABS: Tab[] = ['dashboard', 'projects', 'providers', 'mcp', 'github', 'users'];
 
-/** #/projects/3/sessions/7 → { tab: 'projects', projectId: 3, sessionId: 7 }. Unknown → projects. */
+/** #/projects/3/sessions/7 → { tab: 'projects', projectId: 3, sessionId: 7 }. Unknown → dashboard. */
 export function parseRoute(hash: string): Route {
   const [tab, id, sub, sid] = hash.replace(/^#\/?/, '').split('/');
-  if (!TABS.includes(tab as Tab)) return { tab: 'projects' };
+  if (!TABS.includes(tab as Tab)) return { tab: 'dashboard' };
   if (tab !== 'projects' || !/^\d+$/.test(id ?? '')) return { tab: tab as Tab };
   const route: Route = { tab: 'projects', projectId: Number(id) };
   if (sub === 'sessions' && /^\d+$/.test(sid ?? '')) route.sessionId = Number(sid);

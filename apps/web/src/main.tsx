@@ -1,6 +1,10 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import '@fontsource-variable/inter';
 import '@mantine/core/styles.css';
+import 'react-grid-layout/css/styles.css';
+// Last, so the panel's own rules win over the libraries' defaults.
+import './app.css';
 import { App } from './App.js';
 import { ThemeRoot } from './ThemeRoot.js';
 
