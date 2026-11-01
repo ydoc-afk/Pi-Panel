@@ -11,6 +11,12 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
 
 ## What it does
 
+- **Dashboard.** The home page: prompts, tool calls and failures per day for two weeks, the latest
+  sessions, sessions by model, the most-called tools, every project at a glance, and a health check of
+  the sandbox image, providers, GitHub, MCP servers and pending accounts. It refreshes every 30 seconds.
+  _Customize_ lets you drag widgets on a snap-to-grid layout, resize them, remove them and add them back;
+  each person's arrangement is saved in their browser. Activity is counted from events recorded by this
+  version on; prompts from older sessions are counted by their message time, their tool calls are not.
 - **Projects and sessions.** One container per project with a bind-mounted workspace; pi runs inside it.
   Sessions stream live over WebSocket, persist their transcript, and resume.
 - **Providers.** Anthropic, OpenAI, and any OpenAI-compatible server (llama.cpp, Unsloth Studio, ...).
@@ -37,6 +43,12 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
   opens on its sessions, with GitHub, MCP, packages and the lab one tab away.
 
 ## Screenshots
+
+![Dashboard](docs/screenshots/dashboard-dark.png)
+_The dashboard: two weeks of activity, recent sessions, model and tool usage, and system health._
+
+![Customizing the dashboard](docs/screenshots/dashboard-customize.png)
+_Customize: drag, resize, remove and add widgets on a snap-to-grid layout (light theme)._
 
 <table>
   <tr>
