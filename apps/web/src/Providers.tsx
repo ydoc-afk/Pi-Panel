@@ -1,5 +1,26 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Group, Paper, PasswordInput, Select, Stack, Text, TextInput } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Card,
+  Grid,
+  Group,
+  PasswordInput,
+  Select,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon,
+} from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconBrandOpenai,
+  IconKey,
+  IconLock,
+  IconLockOpen,
+  IconServer,
+  IconSparkles,
+} from '@tabler/icons-react';
 import {
   createProvider,
   deleteProvider,
@@ -10,10 +31,19 @@ import {
   type Provider,
   type ProviderKind,
 } from './api.js';
-import { ErrorText, PageHeader, Tip } from './ui.js';
+import { EmptyState, ErrorText, PageHeader, Tip } from './ui.js';
 
 // Mirrors the server's rule for provider names.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
+
+const KIND_ICON = {
+  anthropic: IconSparkles,
+  openai: IconBrandOpenai,
+  'openai-compatible': IconServer,
+} as const;
+
+/** How many model names to show on a provider card before summarising the rest. */
+const MODEL_PREVIEW = 6;
 
 const KIND_LABEL: Record<ProviderKind, string> = {
   'openai-compatible': 'OpenAI-compatible (llama.cpp, Unsloth Studio, ...)',
@@ -200,82 +230,148 @@ export function Providers() {
   }
 
   return (
-    <Stack>
+    <Stack gap="lg">
       <PageHeader
+        icon={IconKey}
         title="Providers"
         description="Where the agent gets its models. Keys are stored encrypted and never shown again."
       />
-      <Paper withBorder p="md" radius="md" maw={560}>
-        <ProviderForm key={providers.length} onSaved={() => void refresh()} />
-      </Paper>
       {message && <Text size="sm">{message}</Text>}
       <ErrorText error={error} />
-      <Stack gap="sm">
-        {providers.map((p) => (
-          <Paper key={p.id} withBorder p="md" radius="md">
-            {editing === p.id ? (
-              <ProviderForm
-                initial={p}
-                onCancel={() => setEditing(null)}
-                onSaved={() => {
-                  setEditing(null);
-                  void refresh();
-                }}
-              />
-            ) : (
-              <Stack gap={4}>
-                <Group gap="xs">
-                  <Text fw={600}>{p.name}</Text>
-                  <Text size="sm" c="dimmed">
-                    {KIND_LABEL[p.kind]}
-                  </Text>
-                </Group>
-                <Text size="sm" c="dimmed">
-                  {p.baseUrl ?? 'default endpoint'} · {p.hasKey ? 'key stored' : 'no key'} ·{' '}
-                  {p.models.length} model{p.models.length === 1 ? '' : 's'}
-                </Text>
-                {p.warning && (
-                  <Text size="sm" c="orange">
-                    {p.warning}
-                  </Text>
-                )}
-                <Group gap="xs" mt={4}>
-                  <Tip label="Ask the provider which models it serves">
-                    <Button
-                      size="xs"
-                      variant="light"
-                      onClick={() =>
-                        void act(async () => {
-                          const updated = await discoverModels(p.id);
-                          return `${p.name}: found ${updated.models.length} models`;
-                        })
-                      }
-                    >
-                      Discover models
-                    </Button>
-                  </Tip>
-                  <Tip label="Change the address, key or models">
-                    <Button size="xs" variant="subtle" onClick={() => setEditing(p.id)}>
-                      Edit
-                    </Button>
-                  </Tip>
-                  <Button
-                    size="xs"
-                    variant="subtle"
-                    color="red"
-                    onClick={() => {
-                      if (confirm(`Delete provider "${p.name}"?`))
-                        void act(() => deleteProvider(p.id));
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </Group>
-              </Stack>
+      <Grid gap="lg" align="flex-start">
+        <Grid.Col span={{ base: 12, lg: 7 }} order={{ base: 2, lg: 1 }}>
+          <Stack gap="md">
+            {providers.length === 0 && (
+              <EmptyState icon={IconKey} title="No providers yet">
+                Add Anthropic, OpenAI, or any OpenAI-compatible server so sessions have a model to
+                talk to.
+              </EmptyState>
             )}
-          </Paper>
-        ))}
-      </Stack>
+            {providers.map((p) => {
+              const KindIcon = KIND_ICON[p.kind];
+              return (
+                <Card key={p.id} padding="lg">
+                  {editing === p.id ? (
+                    <ProviderForm
+                      initial={p}
+                      onCancel={() => setEditing(null)}
+                      onSaved={() => {
+                        setEditing(null);
+                        void refresh();
+                      }}
+                    />
+                  ) : (
+                    <Stack gap="sm">
+                      <Group justify="space-between" wrap="nowrap" align="flex-start">
+                        <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+                          <ThemeIcon variant="light" size={40} radius="md">
+                            <KindIcon size={22} stroke={1.6} />
+                          </ThemeIcon>
+                          <Stack gap={0} style={{ minWidth: 0 }}>
+                            <Text fw={650} truncate>
+                              {p.name}
+                            </Text>
+                            <Text size="sm" c="dimmed" truncate>
+                              {KIND_LABEL[p.kind]}
+                            </Text>
+                          </Stack>
+                        </Group>
+                        <Badge
+                          variant="light"
+                          color={p.hasKey ? 'green' : 'gray'}
+                          leftSection={
+                            p.hasKey ? <IconLock size={12} /> : <IconLockOpen size={12} />
+                          }
+                        >
+                          {p.hasKey ? 'Key stored' : 'No key'}
+                        </Badge>
+                      </Group>
+                      <Text size="xs" ff="monospace" c="dimmed" style={{ wordBreak: 'break-all' }}>
+                        {p.baseUrl ?? 'Default endpoint'}
+                      </Text>
+                      <Group gap={6}>
+                        {p.models.length === 0 ? (
+                          <Text size="sm" c="dimmed">
+                            No models yet. Use Discover models.
+                          </Text>
+                        ) : (
+                          <>
+                            {p.models.slice(0, MODEL_PREVIEW).map((m) => (
+                              <Badge key={m} variant="default" tt="none" fw={500}>
+                                {m}
+                              </Badge>
+                            ))}
+                            {p.models.length > MODEL_PREVIEW && (
+                              <Tip label={p.models.slice(MODEL_PREVIEW).join(', ')}>
+                                <Badge variant="outline" color="gray" tt="none" fw={500}>
+                                  +{p.models.length - MODEL_PREVIEW} more
+                                </Badge>
+                              </Tip>
+                            )}
+                          </>
+                        )}
+                      </Group>
+                      {p.warning && (
+                        <Group gap={6} wrap="nowrap" c="orange">
+                          <IconAlertTriangle size={16} style={{ flexShrink: 0 }} />
+                          <Text size="sm" c="orange">
+                            {p.warning}
+                          </Text>
+                        </Group>
+                      )}
+                      <Group gap="xs" mt={4}>
+                        <Tip label="Ask the provider which models it serves">
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() =>
+                              void act(async () => {
+                                const updated = await discoverModels(p.id);
+                                return `${p.name}: found ${updated.models.length} models`;
+                              })
+                            }
+                          >
+                            Discover models
+                          </Button>
+                        </Tip>
+                        <Tip label="Change the address, key or models">
+                          <Button size="xs" variant="default" onClick={() => setEditing(p.id)}>
+                            Edit
+                          </Button>
+                        </Tip>
+                        <Button
+                          size="xs"
+                          variant="subtle"
+                          color="red"
+                          onClick={() => {
+                            if (confirm(`Delete provider "${p.name}"?`))
+                              void act(() => deleteProvider(p.id));
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </Group>
+                    </Stack>
+                  )}
+                </Card>
+              );
+            })}
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 5 }} order={{ base: 1, lg: 2 }}>
+          <Card padding="lg" style={{ position: 'sticky', top: 80 }}>
+            <Stack gap="md">
+              <div>
+                <Text fw={650}>Add a provider</Text>
+                <Text size="sm" c="dimmed">
+                  Test the connection first to fill in the models it offers.
+                </Text>
+              </div>
+              <ProviderForm key={providers.length} onSaved={() => void refresh()} />
+            </Stack>
+          </Card>
+        </Grid.Col>
+      </Grid>
     </Stack>
   );
 }

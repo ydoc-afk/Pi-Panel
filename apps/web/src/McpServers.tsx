@@ -1,5 +1,23 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Group, Paper, Stack, Text, TextInput, Textarea } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Card,
+  Group,
+  Stack,
+  Text,
+  TextInput,
+  Textarea,
+  ThemeIcon,
+} from '@mantine/core';
+import {
+  IconBox,
+  IconClipboardText,
+  IconPlug,
+  IconPlus,
+  IconTerminal,
+  IconWorld,
+} from '@tabler/icons-react';
 import {
   deleteMcpServer,
   discoverMcp,
@@ -15,7 +33,13 @@ import { McpServerForm } from './McpServerForm.js';
 import { ReaBuilder } from './ReaBuilder.js';
 import { RegistryBrowser, registryNotes, registryPreset } from './RegistryBrowser.js';
 import { McpToolList } from './McpToolList.js';
-import { Collapsible, ErrorText, mono, PageHeader, Tip } from './ui.js';
+import { Collapsible, EmptyState, ErrorText, mono, PageHeader, Tip } from './ui.js';
+
+const TYPE_INFO = {
+  stdio: { label: 'Command', icon: IconTerminal },
+  http: { label: 'URL', icon: IconWorld },
+  managed: { label: 'Managed container', icon: IconBox },
+} as const;
 
 type Mode =
   | { kind: 'none' }
@@ -33,18 +57,18 @@ function StateBadge({ server, testing }: { server: McpServer; testing: boolean }
   const d = server.discovery;
   if (!d)
     return (
-      <Badge variant="light" color="gray">
+      <Badge variant="dot" color="gray" tt="none">
         not tested
       </Badge>
     );
   if (d.state === 'connected')
     return (
-      <Badge variant="light" color="green">
+      <Badge variant="dot" color="green" tt="none">
         connected, {d.tools.length} tool{d.tools.length === 1 ? '' : 's'}
       </Badge>
     );
   return (
-    <Badge variant="light" color="red">
+    <Badge variant="dot" color="red" tt="none">
       {d.state}
     </Badge>
   );
@@ -111,57 +135,64 @@ export function McpServers() {
     presets.find((p) => p.server === preset)?.notes ?? [];
 
   return (
-    <Stack>
+    <Stack gap="lg">
       <PageHeader
+        icon={IconPlug}
         title="MCP servers"
         description="Add servers here once, then switch them on per project. Command servers run inside the project container with the agent's permissions, and any secrets you give them are visible to the agent. Remote URL servers keep their own credentials."
       />
 
-      {mode.kind === 'none' && reaPreset && (
-        <ReaBuilder onAdd={() => setMode({ kind: 'form', preset: reaPreset.server })} />
-      )}
-
       {mode.kind === 'none' && (
-        <Group gap="xs">
-          <Text fw={600} size="sm">
-            Add:
-          </Text>
-          {presets.map((p) => (
-            <Tip key={p.id} label={p.description}>
-              <Button
-                size="xs"
-                variant="light"
-                onClick={() => setMode({ kind: 'form', preset: p.server })}
-              >
-                {p.title}
-              </Button>
-            </Tip>
-          ))}
-          <Tip label="Describe any command or URL server yourself">
-            <Button size="xs" variant="default" onClick={() => setMode({ kind: 'form' })}>
-              Custom&hellip;
-            </Button>
-          </Tip>
-          <Tip label="Import an mcpServers config from Claude Desktop, Cursor and similar">
-            <Button size="xs" variant="default" onClick={() => setMode({ kind: 'import' })}>
-              Paste JSON&hellip;
-            </Button>
-          </Tip>
-        </Group>
-      )}
-
-      {mode.kind === 'none' && (
-        <Collapsible title="Find servers in the MCP registry" defaultOpen={false}>
-          <RegistryBrowser
-            onAdd={(item) =>
-              setMode({
-                kind: 'form',
-                preset: registryPreset(item),
-                notes: registryNotes(item),
-              })
-            }
-          />
-        </Collapsible>
+        <Card padding="lg">
+          <Stack gap="md">
+            <div>
+              <Text fw={650}>Add a server</Text>
+              <Text size="sm" c="dimmed">
+                Start from a ready-made server, describe your own, or search the public registry.
+              </Text>
+            </div>
+            <Group gap="xs">
+              {presets.map((p) => (
+                <Tip key={p.id} label={p.description}>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    leftSection={<IconPlus size={14} />}
+                    onClick={() => setMode({ kind: 'form', preset: p.server })}
+                  >
+                    {p.title}
+                  </Button>
+                </Tip>
+              ))}
+              <Tip label="Describe any command or URL server yourself">
+                <Button size="xs" variant="default" onClick={() => setMode({ kind: 'form' })}>
+                  Custom&hellip;
+                </Button>
+              </Tip>
+              <Tip label="Import an mcpServers config from Claude Desktop, Cursor and similar">
+                <Button
+                  size="xs"
+                  variant="default"
+                  leftSection={<IconClipboardText size={14} />}
+                  onClick={() => setMode({ kind: 'import' })}
+                >
+                  Paste JSON&hellip;
+                </Button>
+              </Tip>
+            </Group>
+            <Collapsible title="Find servers in the MCP registry" defaultOpen={false}>
+              <RegistryBrowser
+                onAdd={(item) =>
+                  setMode({
+                    kind: 'form',
+                    preset: registryPreset(item),
+                    notes: registryNotes(item),
+                  })
+                }
+              />
+            </Collapsible>
+          </Stack>
+        </Card>
       )}
 
       {mode.kind === 'form' && (
@@ -180,7 +211,7 @@ export function McpServers() {
       )}
 
       {mode.kind === 'import' && (
-        <Paper withBorder p="md" radius="md" maw={560}>
+        <Card padding="lg" maw={640}>
           <Stack gap="sm">
             <Text size="sm">
               Paste an <code>mcpServers</code> config from Claude Desktop, Cursor and similar, or a
@@ -208,7 +239,7 @@ export function McpServers() {
               </Button>
             </Group>
           </Stack>
-        </Paper>
+        </Card>
       )}
 
       {notice && <Text size="sm">{notice}</Text>}
@@ -224,8 +255,13 @@ export function McpServers() {
       <ErrorText error={error} />
 
       <Stack gap="sm">
+        {servers.length > 0 && (
+          <Text fw={650} mt="xs">
+            Library ({servers.length})
+          </Text>
+        )}
         {servers.map((s) => (
-          <Paper key={s.id} withBorder p="md" radius="md">
+          <Card key={s.id} padding="lg">
             {mode.kind === 'edit' && mode.id === s.id ? (
               <McpServerForm
                 initial={s}
@@ -233,26 +269,40 @@ export function McpServers() {
                 onCancel={() => setMode({ kind: 'none' })}
               />
             ) : (
-              <Stack gap={4}>
-                <Group gap="xs" wrap="wrap">
-                  <Text fw={600}>{s.name}</Text>
-                  <Text size="sm" c="dimmed">
-                    (
-                    {s.type === 'stdio'
-                      ? 'command'
-                      : s.type === 'managed'
-                        ? 'managed container'
-                        : 'URL'}
-                    )
-                  </Text>
-                  <StateBadge server={s} testing={testing === s.id} />
+              <Stack gap={6}>
+                <Group gap="sm" wrap="nowrap" align="flex-start">
+                  <Tip label={TYPE_INFO[s.type].label}>
+                    <ThemeIcon variant="light" size={36} radius="md">
+                      {(() => {
+                        const TypeIcon = TYPE_INFO[s.type].icon;
+                        return <TypeIcon size={20} stroke={1.6} />;
+                      })()}
+                    </ThemeIcon>
+                  </Tip>
+                  <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                    <Group gap="xs" wrap="wrap">
+                      <Text fw={650}>{s.name}</Text>
+                      <StateBadge server={s} testing={testing === s.id} />
+                    </Group>
+                    <Text size="xs" c="dimmed">
+                      {TYPE_INFO[s.type].label}
+                    </Text>
+                  </Stack>
                 </Group>
                 {s.description && (
                   <Text size="sm" c="dimmed">
                     {s.description}
                   </Text>
                 )}
-                <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>
+                <Text
+                  size="xs"
+                  ff="monospace"
+                  c="dimmed"
+                  px="xs"
+                  py={6}
+                  bg="var(--mantine-color-default-hover)"
+                  style={{ wordBreak: 'break-all', borderRadius: 6 }}
+                >
                   {s.type === 'http'
                     ? s.url
                     : s.type === 'managed'
@@ -287,7 +337,7 @@ export function McpServers() {
                   </Tip>
                   <Button
                     size="xs"
-                    variant="subtle"
+                    variant="default"
                     onClick={() => setMode({ kind: 'edit', id: s.id })}
                   >
                     Edit
@@ -333,12 +383,18 @@ export function McpServers() {
                 )}
               </Stack>
             )}
-          </Paper>
+          </Card>
         ))}
         {servers.length === 0 && mode.kind === 'none' && (
-          <Text c="dimmed">No servers yet. Pick a starter above, or add your own.</Text>
+          <EmptyState icon={IconPlug} title="No servers yet">
+            Pick a starter above, or add your own. Then switch servers on per project.
+          </EmptyState>
         )}
       </Stack>
+
+      {mode.kind === 'none' && reaPreset && (
+        <ReaBuilder onAdd={() => setMode({ kind: 'form', preset: reaPreset.server })} />
+      )}
     </Stack>
   );
 }

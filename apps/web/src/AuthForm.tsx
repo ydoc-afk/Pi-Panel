@@ -60,7 +60,7 @@ export function AuthForm({ setup, onAuthed }: { setup: boolean; onAuthed: (u: Us
 
   if (requested) {
     return (
-      <Card withBorder padding="xl" radius="md">
+      <Card withBorder padding="xl" radius="lg" shadow="md">
         <Stack>
           <Alert icon={<IconClockHour4 size={18} />} color="teal" title="Request sent">
             Your account <b>{username}</b> is waiting for the admin to approve it. Once they do,
@@ -81,11 +81,11 @@ export function AuthForm({ setup, onAuthed }: { setup: boolean; onAuthed: (u: Us
   }
 
   return (
-    <Card withBorder padding="xl" radius="md">
+    <Card withBorder padding="xl" radius="lg" shadow="md">
       <form onSubmit={submit}>
         <Stack>
           <div>
-            <Title order={3}>
+            <Title order={3} style={{ letterSpacing: '-0.01em' }}>
               {setup ? 'Create admin account' : registering ? 'Request an account' : 'Welcome back'}
             </Title>
             <Text size="sm" c="dimmed">
@@ -130,7 +130,7 @@ export function AuthForm({ setup, onAuthed }: { setup: boolean; onAuthed: (u: Us
             />
           )}
           <ErrorText error={error} />
-          <Button type="submit" loading={busy}>
+          <Button type="submit" loading={busy} size="md" mt={4}>
             {setup ? 'Create account' : registering ? 'Request account' : 'Sign in'}
           </Button>
         </Stack>

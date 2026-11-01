@@ -5,7 +5,7 @@ import {
   Code,
   Group,
   Loader,
-  Paper,
+  Card,
   Stack,
   Text,
   TextInput,
@@ -70,7 +70,7 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
 
   if (state.present) {
     return (
-      <Paper withBorder p="md" radius="md">
+      <Card padding="lg">
         <Group justify="space-between" wrap="nowrap">
           <Stack gap={2}>
             <Text fw={600}>REA is built</Text>
@@ -80,17 +80,17 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
           </Stack>
           <Button onClick={onAdd}>Add REA</Button>
         </Group>
-      </Paper>
+      </Card>
     );
   }
 
   const valid = URL_RE.test(url.trim()) && SHA_RE.test(sha.trim());
   const log = state.build.log.slice(-200);
   return (
-    <Paper withBorder p="md" radius="md">
+    <Card padding="lg">
       <form onSubmit={start}>
         <Stack gap="sm">
-          <Title order={4}>Build REA</Title>
+          <Title order={4}>Build REA (Reverse Engineer Anything)</Title>
           <Text size="sm" c="dimmed">
             REA runs Ghidra, so its image has to be built once on this machine. Paste the download
             link of a Ghidra release and its checksum, and the panel does the rest.
@@ -157,6 +157,6 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
           )}
         </Stack>
       </form>
-    </Paper>
+    </Card>
   );
 }
