@@ -1,6 +1,34 @@
 import { useEffect, useState } from 'react';
-import { ActionIcon, Badge, Button, Group, Loader, Select, Stack, Title } from '@mantine/core';
-import { IconArrowLeft, IconPencil, IconX } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Anchor,
+  Breadcrumbs,
+  Button,
+  Grid,
+  Group,
+  Loader,
+  Paper,
+  Select,
+  Stack,
+  Tabs,
+  Text,
+  ThemeIcon,
+  Title,
+  UnstyledButton,
+} from '@mantine/core';
+import {
+  IconBrandGithub,
+  IconFlask,
+  IconFolder,
+  IconPackage,
+  IconPencil,
+  IconPlayerPlay,
+  IconPlug,
+  IconPlus,
+  IconRefresh,
+  IconTerminal2,
+  IconX,
+} from '@tabler/icons-react';
 import {
   createSession,
   deleteSession,
@@ -18,19 +46,84 @@ import { GitHubPanel } from './GitHubPanel.js';
 import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { ProjectMcp } from './ProjectMcp.js';
-import { PROJECT_STATUS } from './projectStatus.js';
+import { ProjectStatusBadge } from './ProjectStatusBadge.js';
 import { navigate } from './router.js';
 import { SessionView } from './SessionView.js';
-import { ErrorText, Tip } from './ui.js';
+import { EmptyState, ErrorText, FlatSection, StatusBadge, Tip } from './ui.js';
 
 /** How often the session list refreshes, so running/idle badges stay current. */
 const POLL_MS = 3000;
 
-const SESSION_COLOR: Record<Session['status'], string> = {
-  idle: 'gray',
-  running: 'teal',
-  error: 'red',
-};
+function SessionItem({
+  session: s,
+  active,
+  onSelect,
+  onRename,
+  onDelete,
+}: {
+  session: Session;
+  active: boolean;
+  onSelect: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <Paper
+      withBorder
+      shadow="none"
+      radius="md"
+      px="sm"
+      py={8}
+      style={{
+        position: 'relative',
+        borderColor: active ? 'var(--mantine-primary-color-filled)' : undefined,
+        background: active ? 'var(--mantine-primary-color-light)' : undefined,
+      }}
+    >
+      <Group gap="xs" wrap="nowrap" justify="space-between">
+        <UnstyledButton
+          className="pp-stretched"
+          onClick={onSelect}
+          aria-pressed={active}
+          style={{ minWidth: 0, flex: 1 }}
+        >
+          <Group gap={8} wrap="nowrap">
+            <IconTerminal2 size={16} stroke={1.6} style={{ flexShrink: 0 }} />
+            <Stack gap={0} style={{ minWidth: 0 }}>
+              <Text size="sm" fw={600} truncate>
+                {s.name}
+              </Text>
+              <Text size="xs" c="dimmed" truncate>
+                {s.modelId ?? 'pi default model'}
+              </Text>
+            </Stack>
+          </Group>
+        </UnstyledButton>
+        <Group gap={2} wrap="nowrap" className="pp-above">
+          {s.status !== 'idle' && <StatusBadge status={s.status} />}
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label={`Rename ${s.name}`}
+            onClick={onRename}
+          >
+            <IconPencil size={14} />
+          </ActionIcon>
+          <ActionIcon
+            variant="subtle"
+            color="red"
+            size="sm"
+            aria-label={`Delete ${s.name}`}
+            onClick={onDelete}
+          >
+            <IconX size={14} />
+          </ActionIcon>
+        </Group>
+      </Group>
+    </Paper>
+  );
+}
 
 export function ProjectView({
   projectId,
@@ -128,117 +221,178 @@ export function ProjectView({
     }
   }
 
+  const crumbs = (
+    <Breadcrumbs separator="/" fz="sm">
+      <Anchor component="button" type="button" onClick={onBack} size="sm">
+        Projects
+      </Anchor>
+      <Text size="sm" c="dimmed">
+        {project?.name ?? '…'}
+      </Text>
+    </Breadcrumbs>
+  );
+
   if (!project) {
     return (
-      <Stack>
-        <Group>
-          <Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={onBack}>
-            Projects
-          </Button>
-        </Group>
+      <Stack gap="lg">
+        {crumbs}
         {error ? <ErrorText error={error} /> : <Loader size="sm" />}
       </Stack>
     );
   }
 
-  const modelOptions = providers.flatMap((p) =>
-    p.models.map((m) => ({ value: `${p.id}:${m}`, label: `${p.name} / ${m}` })),
-  );
-  const status = PROJECT_STATUS[project.status];
+  const modelOptions = providers
+    .filter((p) => p.models.length > 0)
+    .map((p) => ({
+      group: p.name,
+      items: p.models.map((m) => ({ value: `${p.id}:${m}`, label: m })),
+    }));
   const current = sessions.find((s) => s.id === sessionId);
+  const running = project.status === 'running';
 
   return (
-    <Stack>
-      <Group>
-        <Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={onBack}>
-          Projects
-        </Button>
-      </Group>
-      <Group justify="space-between" wrap="wrap">
-        <Group gap="sm">
-          <Title order={2}>{project.name}</Title>
-          <Tip label={status?.hint ?? project.status}>
-            <Badge variant="light" color={status?.color ?? 'gray'}>
-              {project.status}
-            </Badge>
-          </Tip>
+    <Stack gap="lg">
+      <Stack gap={6}>
+        {crumbs}
+        <Group justify="space-between" wrap="wrap" gap="md">
+          <Group gap="md" wrap="nowrap">
+            <ThemeIcon variant="light" size={44} radius="md">
+              <IconFolder size={24} stroke={1.6} />
+            </ThemeIcon>
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Group gap="sm">
+                <Title order={2} style={{ letterSpacing: '-0.015em' }}>
+                  {project.name}
+                </Title>
+                <ProjectStatusBadge status={project.status} />
+              </Group>
+              <Text size="sm" c="dimmed">
+                {sessions.length} session{sessions.length === 1 ? '' : 's'}
+                {project.repo ? ` · ${project.repo}` : ''}
+              </Text>
+            </Stack>
+          </Group>
+          <Group gap="xs">
+            {!running && (
+              <Button
+                size="xs"
+                leftSection={<IconPlayerPlay size={14} />}
+                loading={busy}
+                onClick={() => void containerAction('restart')}
+              >
+                Start container
+              </Button>
+            )}
+            <Tip label="Fresh container from the current sandbox image, e.g. after upgrading pi. Files and history are kept.">
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<IconRefresh size={14} />}
+                disabled={busy}
+                onClick={() => void containerAction('recreate')}
+              >
+                Recreate container
+              </Button>
+            </Tip>
+          </Group>
         </Group>
-        <Group gap="xs">
-          {project.status !== 'running' && (
-            <Button size="xs" loading={busy} onClick={() => void containerAction('restart')}>
-              Start container
-            </Button>
-          )}
-          <Tip label="Fresh container from the current sandbox image, e.g. after upgrading pi. Files and history are kept.">
-            <Button
-              size="xs"
-              variant="default"
-              disabled={busy}
-              onClick={() => void containerAction('recreate')}
-            >
-              Recreate container
-            </Button>
-          </Tip>
-        </Group>
-      </Group>
-      <GitHubPanel projectId={projectId} />
-      <ProjectMcp projectId={projectId} />
-      <Packages projectId={projectId} />
-      <Lab projectId={projectId} />
+      </Stack>
+
       <ErrorText error={error} />
 
-      <Group gap="xs" wrap="wrap" align="center">
-        {sessions.map((s) => (
-          <Group key={s.id} gap={4} wrap="nowrap">
-            <Button
-              variant={sessionId === s.id ? 'filled' : 'light'}
-              aria-pressed={sessionId === s.id}
-              onClick={() => select(s.id)}
-              rightSection={
-                s.status !== 'idle' ? (
-                  <Badge size="xs" variant="filled" color={SESSION_COLOR[s.status]}>
-                    {s.status}
-                  </Badge>
-                ) : undefined
-              }
-            >
-              {s.name}
-              {s.modelId ? ` (${s.modelId})` : ''}
-            </Button>
-            <ActionIcon
-              variant="subtle"
-              color="gray"
-              aria-label={`Rename ${s.name}`}
-              onClick={() => void rename(s)}
-            >
-              <IconPencil size={15} />
-            </ActionIcon>
-            <ActionIcon
-              variant="subtle"
-              color="red"
-              aria-label={`Delete ${s.name}`}
-              onClick={() => void remove(s)}
-            >
-              <IconX size={16} />
-            </ActionIcon>
-          </Group>
-        ))}
-        <Select
-          aria-label="Model"
-          placeholder="No model (pi default)"
-          w={260}
-          value={choice || null}
-          data={modelOptions}
-          onChange={(v) => setChoice(v ?? '')}
-        />
-        <Button onClick={() => void add()} disabled={project.status !== 'running'}>
-          New session
-        </Button>
-      </Group>
+      <Tabs defaultValue="sessions" variant="pills" radius="md">
+        <Tabs.List mb="md">
+          <Tabs.Tab value="sessions" leftSection={<IconTerminal2 size={16} />}>
+            Sessions
+          </Tabs.Tab>
+          <Tabs.Tab value="github" leftSection={<IconBrandGithub size={16} />}>
+            GitHub
+          </Tabs.Tab>
+          <Tabs.Tab value="mcp" leftSection={<IconPlug size={16} />}>
+            MCP
+          </Tabs.Tab>
+          <Tabs.Tab value="packages" leftSection={<IconPackage size={16} />}>
+            Packages
+          </Tabs.Tab>
+          <Tabs.Tab value="lab" leftSection={<IconFlask size={16} />}>
+            Lab
+          </Tabs.Tab>
+        </Tabs.List>
 
-      {sessionId !== undefined && (
-        <SessionView key={sessionId} sessionId={sessionId} name={current?.name} />
-      )}
+        <Tabs.Panel value="sessions">
+          <Grid gap="md">
+            <Grid.Col span={{ base: 12, md: 4, lg: 3 }}>
+              <Stack gap="sm">
+                <Paper withBorder radius="lg" p="sm">
+                  <Stack gap="xs">
+                    <Select
+                      aria-label="Model"
+                      placeholder="No model (pi default)"
+                      size="sm"
+                      clearable
+                      value={choice || null}
+                      data={modelOptions}
+                      onChange={(v) => setChoice(v ?? '')}
+                    />
+                    <Tip
+                      label={
+                        running
+                          ? "Starts pi in this project's container with the chosen model"
+                          : 'Start the container first'
+                      }
+                    >
+                      <Button
+                        fullWidth
+                        leftSection={<IconPlus size={16} />}
+                        disabled={!running}
+                        onClick={() => void add()}
+                      >
+                        New session
+                      </Button>
+                    </Tip>
+                  </Stack>
+                </Paper>
+                {sessions.map((s) => (
+                  <SessionItem
+                    key={s.id}
+                    session={s}
+                    active={sessionId === s.id}
+                    onSelect={() => select(s.id)}
+                    onRename={() => void rename(s)}
+                    onDelete={() => void remove(s)}
+                  />
+                ))}
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 8, lg: 9 }}>
+              {sessionId !== undefined ? (
+                <SessionView key={sessionId} sessionId={sessionId} name={current?.name} />
+              ) : (
+                <EmptyState icon={IconTerminal2} title="No session open">
+                  {sessions.length > 0
+                    ? 'Pick a session on the left to see its transcript, or start a new one.'
+                    : 'Start a session to talk to pi in this project. Its transcript is kept, so you can come back to it.'}
+                </EmptyState>
+              )}
+            </Grid.Col>
+          </Grid>
+        </Tabs.Panel>
+
+        <FlatSection>
+          <Tabs.Panel value="github">
+            <GitHubPanel projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="mcp">
+            <ProjectMcp projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="packages">
+            <Packages projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="lab">
+            <Lab projectId={projectId} />
+          </Tabs.Panel>
+        </FlatSection>
+      </Tabs>
     </Stack>
   );
 }

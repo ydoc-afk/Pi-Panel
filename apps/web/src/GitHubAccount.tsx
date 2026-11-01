@@ -1,5 +1,17 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, Group, PasswordInput, Stack, Text } from '@mantine/core';
+import {
+  Avatar,
+  Badge,
+  Button,
+  Card,
+  Group,
+  List,
+  PasswordInput,
+  Stack,
+  Text,
+  ThemeIcon,
+} from '@mantine/core';
+import { IconBrandGithub, IconCircleCheck, IconShieldLock } from '@tabler/icons-react';
 import {
   connectGitHub,
   disconnectGitHub,
@@ -63,69 +75,99 @@ export function GitHubAccount() {
   }
 
   return (
-    <Stack>
+    <Stack gap="lg">
       <PageHeader
+        icon={IconBrandGithub}
         title="GitHub"
         description="One account for cloning, pushing and opening pull requests from projects. The token is stored encrypted."
       />
-      {account?.connected ? (
-        <Group gap="sm">
-          <Text>
-            Connected as{' '}
-            <Text span fw={700} inherit>
-              {account.login}
-            </Text>
-          </Text>
-          <Button
-            size="xs"
-            variant="subtle"
-            color="red"
-            onClick={() => {
-              if (confirm('Disconnect GitHub? Stored token will be deleted.')) {
-                void disconnectGitHub().then(() => setAccount({ connected: false }));
-              }
-            }}
-          >
-            Disconnect
-          </Button>
-          <Tip label="Asks GitHub whether the stored token still works">
-            <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
-              Test stored token
-            </Button>
-          </Tip>
-          {testLine}
-        </Group>
-      ) : (
-        <form onSubmit={connect}>
-          <Stack maw={520} gap="sm">
-            <Text size="sm" c="dimmed">
-              Add a personal access token. It needs read/write access to repository contents and
-              pull requests for the repositories you want to push to. It is encrypted at rest and
-              never enters a project container.
-            </Text>
-            <PasswordInput
-              label="Personal access token"
-              autoComplete="off"
-              value={token}
-              onChange={(e) => setToken(e.currentTarget.value)}
-            />
+      <Card padding="xl" maw={640}>
+        {account?.connected ? (
+          <Stack gap="md">
+            <Group justify="space-between" wrap="wrap" gap="md">
+              <Group gap="md" wrap="nowrap">
+                <Avatar size={52} radius="md" color="initials" name={account.login ?? '?'} />
+                <Stack gap={2}>
+                  <Group gap="xs">
+                    <Text fw={650} size="lg">
+                      {account.login}
+                    </Text>
+                    <Badge
+                      variant="light"
+                      color="green"
+                      leftSection={<IconCircleCheck size={12} />}
+                    >
+                      Connected
+                    </Badge>
+                  </Group>
+                  <Text size="sm" c="dimmed">
+                    Projects clone, push and open pull requests as this account.
+                  </Text>
+                </Stack>
+              </Group>
+            </Group>
             <Group gap="xs">
-              <Button type="submit" loading={busy} disabled={!token.trim()}>
-                Connect
-              </Button>
+              <Tip label="Asks GitHub whether the stored token still works">
+                <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
+                  Test stored token
+                </Button>
+              </Tip>
               <Button
-                variant="default"
-                loading={testing}
-                disabled={!token.trim()}
-                onClick={() => void test(token.trim())}
+                size="xs"
+                variant="subtle"
+                color="red"
+                onClick={() => {
+                  if (confirm('Disconnect GitHub? Stored token will be deleted.')) {
+                    void disconnectGitHub().then(() => setAccount({ connected: false }));
+                  }
+                }}
               >
-                Test token
+                Disconnect
               </Button>
             </Group>
             {testLine}
           </Stack>
-        </form>
-      )}
+        ) : (
+          <form onSubmit={connect}>
+            <Stack gap="md">
+              <Group gap="md" wrap="nowrap" align="flex-start">
+                <ThemeIcon variant="light" size={44} radius="md" color="gray">
+                  <IconShieldLock size={24} stroke={1.6} />
+                </ThemeIcon>
+                <Stack gap={4}>
+                  <Text fw={650}>Connect a personal access token</Text>
+                  <List size="sm" c="dimmed" spacing={2}>
+                    <List.Item>
+                      Needs read/write access to repository contents and pull requests.
+                    </List.Item>
+                    <List.Item>Encrypted at rest, and never enters a project container.</List.Item>
+                  </List>
+                </Stack>
+              </Group>
+              <PasswordInput
+                label="Personal access token"
+                autoComplete="off"
+                value={token}
+                onChange={(e) => setToken(e.currentTarget.value)}
+              />
+              <Group gap="xs">
+                <Button type="submit" loading={busy} disabled={!token.trim()}>
+                  Connect
+                </Button>
+                <Button
+                  variant="default"
+                  loading={testing}
+                  disabled={!token.trim()}
+                  onClick={() => void test(token.trim())}
+                >
+                  Test token
+                </Button>
+              </Group>
+              {testLine}
+            </Stack>
+          </form>
+        )}
+      </Card>
       <ErrorText error={error} />
     </Stack>
   );
