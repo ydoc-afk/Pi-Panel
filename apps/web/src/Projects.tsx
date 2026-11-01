@@ -1,11 +1,100 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Alert, Badge, Button, Group, Paper, Stack, Text, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Card,
+  Group,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon,
+  UnstyledButton,
+} from '@mantine/core';
+import {
+  IconAlertTriangle,
+  IconBrandGithub,
+  IconCalendar,
+  IconFolder,
+  IconFolderPlus,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react';
 import { ProjectView } from './ProjectView.js';
 import { createProject, deleteProject, getSandbox, listProjects, type Project } from './api.js';
-import { ErrorText, PageHeader, Tip } from './ui.js';
+import { EmptyState, ErrorText, PageHeader, StatusBadge, Tip } from './ui.js';
+
+const created = (ms: number) =>
+  new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+function ProjectCard({
+  project: p,
+  busy,
+  onOpen,
+  onDelete,
+}: {
+  project: Project;
+  busy: boolean;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <Card className="pp-lift" padding="lg">
+      <Stack gap="md">
+        <Group justify="space-between" wrap="nowrap" align="flex-start">
+          <Group gap="sm" wrap="nowrap" style={{ minWidth: 0 }}>
+            <ThemeIcon variant="light" size={40} radius="md">
+              <IconFolder size={22} stroke={1.6} />
+            </ThemeIcon>
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              {/* The button's click area stretches over the whole card. */}
+              <UnstyledButton
+                className="pp-stretched"
+                onClick={onOpen}
+                aria-label={`Open ${p.name}`}
+              >
+                <Text fw={650} truncate>
+                  {p.name}
+                </Text>
+              </UnstyledButton>
+              <StatusBadge status={p.status} />
+            </Stack>
+          </Group>
+          <Tip label="Removes the container and its workspace files">
+            <ActionIcon
+              className="pp-above"
+              variant="subtle"
+              color="red"
+              aria-label={`Delete ${p.name}`}
+              disabled={busy}
+              onClick={onDelete}
+            >
+              <IconTrash size={16} stroke={1.6} />
+            </ActionIcon>
+          </Tip>
+        </Group>
+        <Stack gap={6}>
+          <Group gap={6} wrap="nowrap" c="dimmed">
+            <IconBrandGithub size={15} stroke={1.6} />
+            <Text size="sm" c={p.repo ? undefined : 'dimmed'} truncate>
+              {p.repo ?? 'No repository yet'}
+            </Text>
+          </Group>
+          <Group gap={6} wrap="nowrap" c="dimmed">
+            <IconCalendar size={15} stroke={1.6} />
+            <Text size="sm" c="dimmed">
+              Created {created(p.createdAt)}
+            </Text>
+          </Group>
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
 
 export function Projects() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[] | null>(null);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,69 +137,68 @@ export function Projects() {
   if (open) return <ProjectView project={open} onBack={() => setOpen(null)} />;
 
   return (
-    <Stack>
+    <Stack gap="lg">
       <PageHeader
+        icon={IconFolder}
         title="Projects"
         description="Each project is its own sandboxed container with a workspace. Open one to start an agent session."
+        action={
+          <form onSubmit={add}>
+            <Group gap="xs" wrap="nowrap">
+              <TextInput
+                aria-label="New project name"
+                placeholder="New project name"
+                value={name}
+                onChange={(e) => setName(e.currentTarget.value)}
+                w={{ base: '100%', xs: 240 }}
+              />
+              <Tip label="Creates a sandbox container for this project">
+                <Button
+                  type="submit"
+                  leftSection={<IconPlus size={16} />}
+                  loading={busy && !!name.trim()}
+                  disabled={busy || !name.trim()}
+                >
+                  Create
+                </Button>
+              </Tip>
+            </Group>
+          </form>
+        }
       />
       {!sandboxReady && (
-        <Alert color="orange" variant="light" title="Sandbox image not built">
+        <Alert
+          color="orange"
+          variant="light"
+          radius="lg"
+          icon={<IconAlertTriangle size={18} />}
+          title="Sandbox image not built"
+        >
           Project containers are created from the sandbox image, which is not on this machine yet.
           Build it with <code>docker build -t pi-panel/sandbox-base:latest docker/base</code> from
           the Pi-Panel source directory, then reload this page.
         </Alert>
       )}
-      <form onSubmit={add}>
-        <Group gap="xs" wrap="nowrap">
-          <TextInput
-            placeholder="New project name"
-            value={name}
-            onChange={(e) => setName(e.currentTarget.value)}
-            style={{ flex: 1 }}
-          />
-          <Tip label="Creates a sandbox container for this project">
-            <Button type="submit" disabled={busy || !name.trim()}>
-              Create
-            </Button>
-          </Tip>
-        </Group>
-      </form>
       <ErrorText error={error} />
-      {projects.length === 0 ? (
-        <Text c="dimmed">No projects yet.</Text>
+      {projects?.length === 0 ? (
+        <EmptyState icon={IconFolderPlus} title="No projects yet">
+          Name your first project above. Pi-Panel creates a container and a workspace for it.
+        </EmptyState>
       ) : (
-        <Stack gap="xs">
-          {projects.map((p) => (
-            <Paper key={p.id} withBorder p="sm" radius="md">
-              <Group justify="space-between" wrap="nowrap">
-                <Group gap="sm" wrap="nowrap">
-                  <Tip label="Open this project">
-                    <Button variant="subtle" onClick={() => setOpen(p)}>
-                      {p.name}
-                    </Button>
-                  </Tip>
-                  <Badge variant="light" color="gray">
-                    {p.status}
-                  </Badge>
-                </Group>
-                <Tip label="Removes the container and its workspace files">
-                  <Button
-                    variant="subtle"
-                    color="red"
-                    size="xs"
-                    disabled={busy}
-                    onClick={() => {
-                      if (confirm(`Delete "${p.name}" and its workspace?`))
-                        void run(() => deleteProject(p.id));
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </Tip>
-              </Group>
-            </Paper>
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="md">
+          {(projects ?? []).map((p) => (
+            <ProjectCard
+              key={p.id}
+              project={p}
+              busy={busy}
+              onOpen={() => setOpen(p)}
+              onDelete={() => {
+                if (confirm(`Delete "${p.name}" and its workspace?`))
+                  void run(() => deleteProject(p.id));
+              }}
+            />
           ))}
-        </Stack>
+        </SimpleGrid>
       )}
     </Stack>
   );

@@ -31,8 +31,10 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
   in until the admin approves them in the Users tab. Members work in projects and sessions; providers,
   GitHub, the MCP library and user management stay admin only. Projects, keys and tokens are still shared
   by everyone on the panel, so approve only people you trust.
-- **Interface.** Light, dark or system colour scheme, a choice of accent colours, and tooltips on the main
-  controls. Both are remembered per browser.
+- **Interface.** Light, dark or system colour scheme and a choice of accent colours, behind the
+  palette button in the header and remembered per browser, plus tooltips on the main controls. The Inter
+  typeface is bundled and served by the panel, so it makes no font requests to third parties. Each project
+  opens on its sessions, with GitHub, MCP, packages and the lab one tab away.
 
 ## Screenshots
 
@@ -52,6 +54,9 @@ _Review registrations in the Users tab (light theme)._
 
 ![Projects](docs/screenshots/projects-dark.png)
 _One sandboxed container per project (dark theme)._
+
+![A session](docs/screenshots/session-dark.png)
+_Sessions open next to the project's session list, with GitHub, MCP, packages and the lab in tabs._
 
 ![Providers](docs/screenshots/providers-dark.png)
 _Providers, with Test connection and model discovery._

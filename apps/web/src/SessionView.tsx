@@ -113,8 +113,9 @@ export function SessionView({ sessionId }: { sessionId: number }) {
         style={{
           background: TERM.bg,
           border: `1px solid ${TERM.border}`,
-          borderRadius: 10,
+          borderRadius: 12,
           overflow: 'hidden',
+          boxShadow: '0 10px 30px -12px rgb(0 0 0 / 0.45)',
           fontFamily: MONO,
           fontSize: 13,
           lineHeight: 1.5,
@@ -123,7 +124,7 @@ export function SessionView({ sessionId }: { sessionId: number }) {
         <div
           style={{
             background: TERM.bar,
-            padding: '6px 12px',
+            padding: '8px 14px',
             color: TERM.dim,
             display: 'flex',
             alignItems: 'center',
@@ -134,11 +135,25 @@ export function SessionView({ sessionId }: { sessionId: number }) {
           <span style={{ color: '#ff5f56' }}>●</span>
           <span style={{ color: '#ffbd2e' }}>●</span>
           <span style={{ color: '#27c93f' }}>●</span>
-          <span style={{ marginLeft: 8 }}>pi {t.running ? '· working…' : ''}</span>
+          <span style={{ marginLeft: 8 }}>pi</span>
+          {t.running && (
+            <span
+              style={{
+                marginLeft: 'auto',
+                color: TERM.prompt,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+              }}
+            >
+              <span style={{ animation: 'pp-cursor 1s steps(1) infinite' }}>●</span>
+              working…
+            </span>
+          )}
         </div>
         <div
           ref={screen}
-          style={{ height: 460, overflowY: 'auto', padding: '12px 16px', whiteSpace: 'pre-wrap' }}
+          style={{ height: 520, overflowY: 'auto', padding: '14px 18px', whiteSpace: 'pre-wrap' }}
         >
           {t.items.map((item, i) => (
             <Line key={i} kind={item.kind} text={item.text} />
