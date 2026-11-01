@@ -25,6 +25,7 @@ import {
   IconFolder,
   IconInfoCircle,
   IconKey,
+  IconLayoutDashboard,
   IconLock,
   IconLogout,
   IconPlug,
@@ -34,6 +35,8 @@ import {
 import { AccountDialogs, type AccountDialog } from './AccountDialogs.js';
 import { AuthForm } from './AuthForm.js';
 import { ColorControls } from './ColorControls.js';
+import { Dashboard } from './dashboard/Dashboard.js';
+import type { DashboardNav } from './dashboard/widgets.js';
 import { GitHubAccount } from './GitHubAccount.js';
 import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
@@ -55,6 +58,13 @@ const TABS: {
   adminOnly?: boolean;
   section: 'workspace' | 'admin';
 }[] = [
+  {
+    value: 'dashboard',
+    label: 'Dashboard',
+    hint: 'Activity and health at a glance',
+    icon: IconLayoutDashboard,
+    section: 'workspace',
+  },
   {
     value: 'projects',
     label: 'Projects',
@@ -135,10 +145,10 @@ export function App() {
   }, []);
 
   const isAdmin = status?.user?.role === 'admin';
-  // A member who follows a link to an admin page lands on Projects instead.
+  // A member who follows a link to an admin page lands on the dashboard instead.
   const tab: Tab = TABS.some((t) => t.value === route.tab && (isAdmin || !t.adminOnly))
     ? route.tab
-    : 'projects';
+    : 'dashboard';
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -178,6 +188,11 @@ export function App() {
   const go = (t: Tab) => {
     navigate({ tab: t });
     nav.close();
+  };
+
+  const dashboardNav: DashboardNav = {
+    openProject: (projectId, sessionId) => navigate({ tab: 'projects', projectId, sessionId }),
+    goTo: (t) => go(t),
   };
 
   return (
@@ -285,6 +300,9 @@ export function App() {
 
       <AppShell.Main className="pp-main">
         <Container size="xl" px={0}>
+          {tab === 'dashboard' && (
+            <Dashboard userId={status.user.id} isAdmin={isAdmin} nav={dashboardNav} />
+          )}
           {tab === 'projects' && (
             <Projects projectId={route.projectId} sessionId={route.sessionId} />
           )}

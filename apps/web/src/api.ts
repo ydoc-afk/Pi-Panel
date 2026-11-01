@@ -594,3 +594,55 @@ export const removeAccount = async (id: number) => {
   const data = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
 };
+
+export interface ActivityDay {
+  /** Local calendar date, YYYY-MM-DD. */
+  date: string;
+  prompts: number;
+  toolCalls: number;
+  errors: number;
+}
+
+export interface DashboardSession {
+  id: number;
+  projectId: number;
+  projectName: string;
+  name: string;
+  status: Session['status'];
+  modelId: string | null;
+  providerName: string | null;
+  createdAt: number;
+  lastActivityAt: number | null;
+  prompts: number;
+}
+
+export interface DashboardProject {
+  id: number;
+  name: string;
+  status: string;
+  repo: string | null;
+  createdAt: number;
+  sessions: number;
+  runningSessions: number;
+  prompts: number;
+  lastActivityAt: number | null;
+}
+
+export interface DashboardData {
+  generatedAt: number;
+  activity: { days: ActivityDay[] };
+  projects: { total: number; running: number; items: DashboardProject[] };
+  sessions: { total: number; running: number; errored: number; recent: DashboardSession[] };
+  models: { model: string; sessions: number }[];
+  tools: { name: string; calls: number }[];
+  providers: { total: number; withKey: number; models: number; warnings: number };
+  mcp: { total: number; connected: number; failing: number; untested: number; tools: number };
+  github: { connected: boolean; login: string | null };
+  sandbox: { available: boolean };
+  /** Admin only. */
+  users: { total: number; pending: number } | null;
+}
+
+/** Everything the home dashboard shows. Days are bucketed in this browser's time zone. */
+export const getDashboard = () =>
+  request<DashboardData>(`/api/dashboard?tz=${-new Date().getTimezoneOffset()}`);
