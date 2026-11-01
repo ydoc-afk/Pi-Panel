@@ -22,6 +22,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
+  IconGitBranch,
   IconFolder,
   IconInfoCircle,
   IconKey,
@@ -93,6 +94,14 @@ const TABS: {
     label: 'GitHub',
     hint: 'Account used to clone and push',
     icon: IconBrandGithub,
+    adminOnly: true,
+    section: 'admin',
+  },
+  {
+    value: 'forgejo',
+    label: 'Forgejo',
+    hint: 'Self-hosted git forge',
+    icon: IconGitBranch,
     adminOnly: true,
     section: 'admin',
   },
@@ -309,6 +318,7 @@ export function App() {
           {tab === 'providers' && <Providers />}
           {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}
+          {tab === 'forgejo' && <GitHubAccount forge="forgejo" />}
           {tab === 'users' && isAdmin && <Users onChange={setPending} />}
         </Container>
       </AppShell.Main>

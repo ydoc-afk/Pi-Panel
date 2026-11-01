@@ -29,6 +29,8 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
 - **GitHub.** Clone, commit, push and open pull requests with a personal access token. _Test token_ checks
   a token against GitHub before you connect it. Git runs in the panel, never in the sandbox, and the token
   never enters a container.
+- **Forgejo.** The same clone, commit, push and pull-request flow against a self-hosted Forgejo instance (see
+  `compose/forgejo` to run one locally). See [docs/forgejo-integration.md](docs/forgejo-integration.md).
 - **Pi packages.** Install npm pi packages per project, with an enforced review step that pins the exact
   version you looked at and disables install scripts.
 - **Package lab.** Scaffold and test extensions, skills, prompts and themes in a throwaway container with

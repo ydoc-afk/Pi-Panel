@@ -174,24 +174,34 @@ export const discoverModels = async (id: number) =>
   (await request<{ provider: Provider }>(`/api/providers/${id}/discover`, send('POST', {})))
     .provider;
 
+export type Forge = 'github' | 'forgejo';
+
 export interface GitHubAccount {
   connected: boolean;
   login?: string;
+  /** Forgejo only: the instance address the token belongs to. */
+  baseUrl?: string;
 }
 
 export interface RepoStatus {
   repo: string | null;
   branch: string | null;
   changes: number;
+  /** Set when the project's repository lives on the other forge. */
+  linkedTo?: Forge;
 }
 
-export const getGitHub = () => request<GitHubAccount>('/api/github');
-export const connectGitHub = (token: string) =>
-  request<GitHubAccount>('/api/github', send('PUT', { token }));
-export const disconnectGitHub = () => request<void>('/api/github', { method: 'DELETE' });
-/** Checks a token against GitHub without storing it. Omit the token to test the stored one. */
-export const testGitHub = (token?: string) =>
-  request<{ login: string; id: number }>('/api/github/test', send('POST', token ? { token } : {}));
+export const getGitHub = (forge: Forge = 'github') => request<GitHubAccount>(`/api/${forge}`);
+export const connectGitHub = (token: string, forge: Forge = 'github', baseUrl?: string) =>
+  request<GitHubAccount>(`/api/${forge}`, send('PUT', { token, ...(baseUrl ? { baseUrl } : {}) }));
+export const disconnectGitHub = (forge: Forge = 'github') =>
+  request<void>(`/api/${forge}`, { method: 'DELETE' });
+/** Checks a token against the forge without storing it. Omit the token to test the stored one. */
+export const testGitHub = (token?: string, forge: Forge = 'github', baseUrl?: string) =>
+  request<{ login: string; id: number }>(
+    `/api/${forge}/test`,
+    send('POST', token ? { token, ...(baseUrl ? { baseUrl } : {}) } : {}),
+  );
 
 /** Whether the sandbox image that project containers are created from has been built. */
 export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
@@ -241,24 +251,35 @@ export interface ReaState {
 export const getRea = () => request<ReaState>('/api/rea');
 export const buildRea = (ghidraUrl: string, ghidraSha256: string) =>
   request<ReaState>('/api/rea/build', send('POST', { ghidraUrl, ghidraSha256 }));
-export const getRepoStatus = (projectId: number) =>
-  request<RepoStatus>(`/api/projects/${projectId}/github`);
-export const cloneRepo = (projectId: number, repo: string, branch?: string) =>
+export const getRepoStatus = (projectId: number, forge: Forge = 'github') =>
+  request<RepoStatus>(`/api/projects/${projectId}/${forge}`);
+export const cloneRepo = (
+  projectId: number,
+  repo: string,
+  branch?: string,
+  forge: Forge = 'github',
+) =>
   request<{ repo: string; branch: string }>(
-    `/api/projects/${projectId}/github/clone`,
+    `/api/projects/${projectId}/${forge}/clone`,
     send('POST', { repo, ...(branch ? { branch } : {}) }),
   );
-export const pushBranch = (projectId: number, branch: string, message?: string) =>
+export const pushBranch = (
+  projectId: number,
+  branch: string,
+  message?: string,
+  forge: Forge = 'github',
+) =>
   request<{ branch: string; commit: string; committed: boolean }>(
-    `/api/projects/${projectId}/github/push`,
+    `/api/projects/${projectId}/${forge}/push`,
     send('POST', { branch, ...(message ? { message } : {}) }),
   );
 export const openPullRequest = (
   projectId: number,
   input: { head: string; title: string; body?: string },
+  forge: Forge = 'github',
 ) =>
   request<{ url: string; number: number | null; base: string }>(
-    `/api/projects/${projectId}/github/pr`,
+    `/api/projects/${projectId}/${forge}/pr`,
     send('POST', input),
   );
 
@@ -638,6 +659,7 @@ export interface DashboardData {
   providers: { total: number; withKey: number; models: number; warnings: number };
   mcp: { total: number; connected: number; failing: number; untested: number; tools: number };
   github: { connected: boolean; login: string | null };
+  forgejo: { connected: boolean; login: string | null };
   sandbox: { available: boolean };
   /** Admin only. */
   users: { total: number; pending: number } | null;

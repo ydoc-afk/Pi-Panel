@@ -33,13 +33,15 @@ export interface SessionUser {
  */
 export function memberBlocked(method: string, path: string): boolean {
   if (path.startsWith('/api/admin/')) return true;
-  if (/^\/api\/projects\/[^/]+\/github\/(clone|push|pr)$/.test(path)) return true;
+  if (/^\/api\/projects\/[^/]+\/(github|forgejo)\/(clone|push|pr)$/.test(path)) return true;
   if (method === 'GET' || method === 'HEAD') {
     return path === '/api/mcp/registry' || path === '/api/rea/log';
   }
   return (
     path === '/api/github' ||
     path.startsWith('/api/github/') ||
+    path === '/api/forgejo' ||
+    path.startsWith('/api/forgejo/') ||
     path.startsWith('/api/providers') ||
     path.startsWith('/api/mcp/servers') ||
     path === '/api/mcp/import' ||

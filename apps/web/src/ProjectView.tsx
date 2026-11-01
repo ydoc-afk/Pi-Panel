@@ -18,6 +18,7 @@ import {
 } from '@mantine/core';
 import {
   IconBrandGithub,
+  IconGitBranch,
   IconFlask,
   IconFolder,
   IconPackage,
@@ -308,6 +309,9 @@ export function ProjectView({
           <Tabs.Tab value="github" leftSection={<IconBrandGithub size={16} />}>
             GitHub
           </Tabs.Tab>
+          <Tabs.Tab value="forgejo" leftSection={<IconGitBranch size={16} />}>
+            Forgejo
+          </Tabs.Tab>
           <Tabs.Tab value="mcp" leftSection={<IconPlug size={16} />}>
             MCP
           </Tabs.Tab>
@@ -381,6 +385,9 @@ export function ProjectView({
         <FlatSection>
           <Tabs.Panel value="github">
             <GitHubPanel projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="forgejo">
+            <GitHubPanel projectId={projectId} forge="forgejo" />
           </Tabs.Panel>
           <Tabs.Panel value="mcp">
             <ProjectMcp projectId={projectId} />

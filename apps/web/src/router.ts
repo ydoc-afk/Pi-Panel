@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-export type Tab = 'dashboard' | 'projects' | 'providers' | 'mcp' | 'github' | 'users';
+export type Tab = 'dashboard' | 'projects' | 'providers' | 'mcp' | 'github' | 'forgejo' | 'users';
 
 export interface Route {
   tab: Tab;
@@ -8,7 +8,7 @@ export interface Route {
   sessionId?: number;
 }
 
-const TABS: Tab[] = ['dashboard', 'projects', 'providers', 'mcp', 'github', 'users'];
+const TABS: Tab[] = ['dashboard', 'projects', 'providers', 'mcp', 'github', 'forgejo', 'users'];
 
 /** #/projects/3/sessions/7 → { tab: 'projects', projectId: 3, sessionId: 7 }. Unknown → dashboard. */
 export function parseRoute(hash: string): Route {

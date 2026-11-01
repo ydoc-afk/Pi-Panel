@@ -134,6 +134,23 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
       db.exec('CREATE INDEX IF NOT EXISTS session_events_created ON session_events (created_at)');
     },
   },
+  {
+    // A Forgejo account (its own instance URL plus an encrypted token), and which forge a project's
+    // linked repository lives on. NULL means GitHub, as before.
+    version: 4,
+    name: 'forgejo account and project repository host',
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS forgejo_account (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        base_url TEXT NOT NULL,
+        login TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        token_enc TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`);
+      addMissingColumns(db, 'projects', { repo_host: 'TEXT' });
+    },
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {

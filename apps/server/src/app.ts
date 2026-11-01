@@ -34,6 +34,8 @@ export interface AppOptions {
   fetch?: typeof fetch;
   /** Overrides for the GitHub service (tests point it at local repositories). */
   github?: GitHubOptions;
+  /** Overrides for the Forgejo service. */
+  forgejo?: GitHubOptions;
   /** Overrides for package review (tests). */
   packages?: PackageOptions;
   /** Overrides for the package lab (tests). */
@@ -75,6 +77,11 @@ export function buildApp(opts: AppOptions = {}) {
   const secrets = new Secrets(dataDir);
   const providers = new ProviderStore(db, secrets, opts.fetch);
   const github = new GitHubService(db, secrets, dataDir, { fetch: opts.fetch, ...opts.github });
+  const forgejo = new GitHubService(db, secrets, dataDir, {
+    fetch: opts.fetch,
+    ...opts.forgejo,
+    kind: 'forgejo',
+  });
   const mcpStore = new McpStore(db, secrets);
   const limits = { ...DEFAULT_LIMITS, ...opts.samples };
   const samples = new SamplesService(db, dataDir, limits);
@@ -111,13 +118,14 @@ export function buildApp(opts: AppOptions = {}) {
     });
     registerProviders(app, providers);
     registerGitHub(app, github);
+    registerGitHub(app, forgejo, 'forgejo');
     registerPackages(app, packages);
     registerLab(app, lab);
     registerMcp(app, mcp);
     registerSamples(app, samples);
     registerMcpRegistry(app, opts.fetch ?? fetch);
     registerSessions(app, sessions);
-    registerDashboard(app, { db, runtime, providers, mcp: mcpStore, github });
+    registerDashboard(app, { db, runtime, providers, mcp: mcpStore, github, forgejo });
     // Lets the UI warn before a project is created when the sandbox image has not been built.
     app.get('/api/sandbox', async () => ({
       available: await runtime.hasSandboxImage(),

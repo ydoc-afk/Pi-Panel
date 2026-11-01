@@ -19,6 +19,7 @@ export interface DashboardDeps {
   providers: ProviderStore;
   mcp: McpStore;
   github: GitHubService;
+  forgejo: GitHubService;
 }
 
 export interface ActivityDay {
@@ -190,6 +191,7 @@ export async function buildDashboard(
   const providers = deps.providers.list();
   const servers = deps.mcp.list();
   const github = deps.github.account();
+  const forgejo = deps.forgejo.account();
   const sandbox = await deps.runtime.hasSandboxImage().catch(() => false);
 
   let users: { total: number; pending: number } | null = null;
@@ -238,6 +240,7 @@ export async function buildDashboard(
       ),
     },
     github: { connected: github.connected, login: github.login ?? null },
+    forgejo: { connected: forgejo.connected, login: forgejo.login ?? null },
     sandbox: { available: sandbox },
     users,
   };

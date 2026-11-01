@@ -90,6 +90,7 @@ describe('dashboard endpoint', () => {
     expect(d.providers).toEqual({ total: 0, withKey: 0, models: 0, warnings: 0 });
     expect(d.mcp).toMatchObject({ total: 0, connected: 0, tools: 0 });
     expect(d.github).toEqual({ connected: false, login: null });
+    expect(d.forgejo).toEqual({ connected: false, login: null });
     expect(d.sandbox).toEqual({ available: true });
     expect(d.users).toEqual({ total: 1, pending: 0 });
   });
@@ -221,6 +222,7 @@ describe('buildDashboard', () => {
       providers: new ProviderStore(t.db, secrets),
       mcp: new McpStore(t.db, secrets),
       github: new GitHubService(t.db, secrets, t.dataDir),
+      forgejo: new GitHubService(t.db, secrets, t.dataDir, { kind: 'forgejo' }),
     };
   });
   afterEach(async () => {

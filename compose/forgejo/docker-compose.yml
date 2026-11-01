@@ -1,0 +1,86 @@
+# Local Forgejo (https://forgejo.org): git hosting, issues, PRs, wiki, packages, and Actions CI.
+# Usage: cp .env.example .env && ./setup.sh && docker compose up -d
+name: forgejo
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: forgejo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?run ./setup.sh to create .env}
+      POSTGRES_DB: forgejo
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U forgejo -d forgejo']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  forgejo:
+    image: codeberg.org/forgejo/forgejo:14
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      USER_UID: ${PUID:-1000}
+      USER_GID: ${PGID:-1000}
+      FORGEJO__database__DB_TYPE: postgres
+      FORGEJO__database__HOST: db:5432
+      FORGEJO__database__NAME: forgejo
+      FORGEJO__database__USER: forgejo
+      FORGEJO__database__PASSWD: ${DB_PASSWORD}
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-localhost}
+      FORGEJO__server__ROOT_URL: http://${FORGEJO_DOMAIN:-localhost}:${HTTP_PORT:-3001}/
+      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_DOMAIN:-localhost}
+      FORGEJO__server__SSH_PORT: ${SSH_PORT:-2222}
+      FORGEJO__server__SSH_LISTEN_PORT: 22
+      FORGEJO__server__LFS_START_SERVER: 'true'
+      FORGEJO__security__INSTALL_LOCK: 'true'
+      FORGEJO__security__SECRET_KEY: ${SECRET_KEY}
+      FORGEJO__service__DISABLE_REGISTRATION: 'true'
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: 'false'
+      # Features that make it GitHub-comparable
+      FORGEJO__actions__ENABLED: 'true'
+      FORGEJO__actions__DEFAULT_ACTIONS_URL: https://data.forgejo.org
+      FORGEJO__packages__ENABLED: 'true'
+      FORGEJO__repository__ENABLE_PUSH_CREATE_USER: 'true'
+      FORGEJO__repository__DEFAULT_BRANCH: main
+      FORGEJO__indexer__ISSUE_INDEXER_TYPE: bleve
+      FORGEJO__indexer__REPO_INDEXER_ENABLED: 'true'
+      FORGEJO__webhook__ALLOWED_HOST_LIST: private
+      FORGEJO__mailer__ENABLED: 'false'
+      FORGEJO__log__LEVEL: Info
+    volumes:
+      - ./data/forgejo:/data
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - '${HTTP_PORT:-3001}:3000'
+      - '${SSH_PORT:-2222}:22'
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -fsS http://localhost:3000/api/healthz || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # CI runner for Forgejo Actions (GitHub Actions-compatible workflows in .forgejo/workflows or .github/workflows).
+  # Job containers are started through the host Docker socket; this is for a trusted local machine only.
+  runner:
+    image: code.forgejo.org/forgejo/runner:12
+    restart: unless-stopped
+    user: '0:0'
+    depends_on:
+      forgejo:
+        condition: service_healthy
+    environment:
+      RUNNER_SECRET: ${RUNNER_SECRET}
+      FORGEJO_INSTANCE: http://forgejo:3000
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - ./data/runner:/data
+      - ./runner/entrypoint.sh:/entrypoint.sh:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    entrypoint: ['/bin/sh', '/entrypoint.sh']
+    profiles: ['ci']

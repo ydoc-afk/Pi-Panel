@@ -41,7 +41,7 @@ import { WIDGETS, type WidgetId } from './layout.js';
 /** Where a widget can send the viewer. */
 export interface DashboardNav {
   openProject: (projectId: number, sessionId?: number) => void;
-  goTo: (tab: 'projects' | 'providers' | 'mcp' | 'github' | 'users') => void;
+  goTo: (tab: 'projects' | 'providers' | 'mcp' | 'github' | 'forgejo' | 'users') => void;
 }
 
 export interface WidgetContext {
@@ -232,6 +232,12 @@ function healthChecks({ data: d, nav, isAdmin }: WidgetContext): Check[] {
       level: d.github.connected ? 'ok' : 'off',
       detail: d.github.connected ? `Connected as ${d.github.login}` : 'Not connected',
       open: admin('github'),
+    },
+    {
+      label: 'Forgejo',
+      level: d.forgejo.connected ? 'ok' : 'off',
+      detail: d.forgejo.connected ? `Connected as ${d.forgejo.login}` : 'Not connected',
+      open: admin('forgejo'),
     },
     {
       label: 'MCP servers',
