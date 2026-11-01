@@ -56,6 +56,9 @@ _The dashboard: two weeks of activity, recent sessions, model and tool usage, an
 ![Customizing the dashboard](docs/screenshots/dashboard-customize.png)
 _Customize: drag, resize, remove and add widgets on a snap-to-grid layout (light theme)._
 
+![Updates](docs/screenshots/updates-dark.png)
+_Updates: new commits on the panel's channel, the steps of the last update, and the channel it follows._
+
 <table>
   <tr>
     <td><img src="docs/screenshots/sign-in.png" alt="Sign in" width="100%"></td>
@@ -124,6 +127,28 @@ paste its download link and SHA-256 checksum and press **Build REA image**, or b
 Images are built from source, not published, so an update is a rebuild. Pick the branch you run
 (`main` for stable, `nightly` for the test channel; see [Branches and releases](#branches-and-releases)).
 
+**From the panel.** The **Updates** page (admin only) shows the commit this panel runs, the new commits
+on its channel, and an **Update** button. The `updater` service in `docker-compose.yml` does the work,
+because a container cannot rebuild itself:
+
+1. It checks that the checkout has no uncommitted changes, that the update is a fast-forward, that the
+   new code's database schema is not older than the running one, and that the panel's settings come
+   from `.env` or `docker-compose.yml` (settings typed into a shell would be lost when the container is
+   recreated).
+2. It builds the new image while the panel keeps running.
+3. It stops the panel, copies the database and `secret.key` to `data/backups/`, and starts the new
+   version.
+4. If the new version does not answer within three minutes, it puts back the previous image, commit and,
+   when the schema changed, the database.
+
+**Roll back** on the same page undoes the last update. The updater looks for new commits every 6 hours
+(`PI_PANEL_UPDATE_CHECK_HOURS`, 0 turns it off). It has the Docker socket, as the panel does, and write
+access to the checkout. It publishes no port, and the panel reaches it with a token kept in
+`data/updater/`. Remove the service to turn in-panel updates off. Panels from before the updater
+existed need one manual update, below, to get it.
+
+**By hand:**
+
 ```bash
 # 1. Stop the panel and back up ./data (it holds the database and secret.key, which belong together)
 docker compose stop pi-panel
@@ -176,7 +201,10 @@ works without containers.
 
 To run both on one host, give the test instance its own directory, port and data folder, and set
 `PI_PANEL_NAMESPACE` (for example `nightly-`) so its container and network names do not collide with the
-stable panel's. The two can share the sandbox and REA images.
+stable panel's. The two can share the sandbox and REA images. Each instance has its own updater, which follows the branch its
+checkout is on. To keep the test instance on nightly, set `PI_PANEL_CHANNELS=nightly` in its `.env`.
+Switching a panel from nightly back to main is refused once nightly has migrated its database, because
+the older code cannot read the newer schema.
 
 ### Tests against the real thing
 
@@ -232,6 +260,9 @@ docs/                design notes and how-tos
 | **Docker: sandbox and panel images build; the panel container runs**        | **Built and started with Docker Compose on a real host**       |
 | **Docker: networks, mounts, `exec`, sidecars, project sessions**            | **Not verified end to end**                                    |
 | **Ghidra / JDK analysis inside the REA image**                              | **Not verified**                                               |
+| Dashboard, Updates page and its restart handling                            | Driven in headless Chromium against the fake runtime           |
+| Updater: update, automatic and manual roll back, channel switch, refusals   | Real git and a real Docker daemon, with a stand-in panel image |
+| **The `updater` image build**                                               | **Not verified** (its package mirrors were unreachable)        |
 
 Expect to fix things on the first real run, and please report what breaks.
 
@@ -239,7 +270,7 @@ Expect to fix things on the first real run, and please report what breaks.
 
 Promoting lab packages to a shared toolbox, one-click pi upgrades (the About box shows the version;
 upgrading is still a rebuild plus **Recreate container**), update checks for packages and MCP servers,
-per-call approval prompts for risky tools, multi-user support, and a panel update notice. See
+per-call approval prompts for risky tools, and multi-user support. See
 [docs/updates.md](docs/updates.md).
 
 ## Documentation

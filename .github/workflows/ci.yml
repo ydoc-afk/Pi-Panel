@@ -48,6 +48,20 @@ jobs:
           push: false
           cache-from: type=gha,scope=panel
           cache-to: type=gha,mode=max,scope=panel
+      - name: Updater image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: updater
+          push: false
+          load: true
+          tags: pi-panel-updater:ci
+          cache-from: type=gha,scope=panel
+      - name: Updater image has what it needs
+        run: |
+          docker run --rm pi-panel-updater:ci sh -c '
+            git --version && docker compose version && which setpriv &&
+            node -e "import(\"/updater/updater-main.js\").then(() => console.log(\"updater module loads\"))"'
       - name: Sandbox image
         uses: docker/build-push-action@v6
         with:

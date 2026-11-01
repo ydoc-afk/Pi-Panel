@@ -22,6 +22,27 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
 
+  # Updates the panel from this checkout when the admin presses Update in the panel (Updates page).
+  # It runs git and docker compose here, so it has the Docker socket (as the panel does) and write
+  # access to this directory, mounted at the same path as on the host so ./data resolves the same.
+  # No port is published; the panel reaches it on the compose network with a token kept in ./data.
+  # Remove this service to turn in-panel updates off.
+  updater:
+    build:
+      context: .
+      target: updater
+    working_dir: ${PWD}
+    environment:
+      PI_PANEL_REPO: ${PWD}
+      # Branches this panel may follow. A test instance can narrow it to nightly.
+      PI_PANEL_CHANNELS: ${PI_PANEL_CHANNELS:-main,nightly}
+      # How often to look for new commits; 0 turns the background check off.
+      PI_PANEL_UPDATE_CHECK_HOURS: ${PI_PANEL_UPDATE_CHECK_HOURS:-6}
+    volumes:
+      - ${PWD}:${PWD}
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
   # Built on demand; project containers are created from this image.
   sandbox-base:
     build: ./docker/base
