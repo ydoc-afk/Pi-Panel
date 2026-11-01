@@ -646,3 +646,76 @@ export interface DashboardData {
 /** Everything the home dashboard shows. Days are bucketed in this browser's time zone. */
 export const getDashboard = () =>
   request<DashboardData>(`/api/dashboard?tz=${-new Date().getTimezoneOffset()}`);
+
+export interface UpdateCommit {
+  sha: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+export interface UpdateChannel {
+  sha: string;
+  behind: number;
+  ahead: number;
+  commits: UpdateCommit[];
+  schema: number;
+}
+
+export interface UpdateJob {
+  id: number;
+  kind: 'update' | 'switch' | 'rollback';
+  status: 'running' | 'succeeded' | 'failed' | 'rolled-back';
+  phase: string;
+  from: { branch: string; sha: string; schema: number };
+  to: { branch: string; sha: string; schema: number };
+  backup: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+  error: string | null;
+  log: string[];
+  /** Total log lines, when only the lines after a point were asked for. */
+  logLength?: number;
+}
+
+export interface UpdaterStatus {
+  repo: string;
+  remoteUrl: string | null;
+  webUrl: string | null;
+  branch: string | null;
+  channel: string | null;
+  channels: string[];
+  head: UpdateCommit;
+  dirty: boolean;
+  schema: number;
+  remotes: Record<string, UpdateChannel | null>;
+  checkedAt: number | null;
+  fetchErrors: Record<string, string>;
+  job: UpdateJob | null;
+}
+
+export interface RunningPanel {
+  /** The commit this panel's image was built from, when the updater built it. */
+  commit: string | null;
+  schema: number;
+  /** Whether the updater container has been set up (its token exists). */
+  configured: boolean;
+}
+
+export const getRunningPanel = () => request<RunningPanel>('/api/admin/updates/running');
+export const getUpdateStatus = () => request<UpdaterStatus>('/api/admin/updates/status');
+export const checkUpdates = () => request<UpdaterStatus>('/api/admin/updates/check', json({}));
+export const applyUpdate = (branch: string, sha: string) =>
+  request<{ job: UpdateJob }>('/api/admin/updates/apply', json({ branch, sha }));
+export const rollbackUpdate = () =>
+  request<{ job: UpdateJob }>('/api/admin/updates/rollback', json({}));
+export const getUpdateJob = (after: number) =>
+  request<{ job: (UpdateJob & { logLength: number }) | null }>(
+    `/api/admin/updates/job?after=${after}`,
+  );
+/** True when the panel answers its health check (used while it restarts). */
+export const panelHealthy = () =>
+  fetch('/api/health', { cache: 'no-store' }).then(
+    (r) => r.ok,
+    () => false,
+  );

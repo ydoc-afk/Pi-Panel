@@ -22,6 +22,7 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
+  IconCloudDownload,
   IconFolder,
   IconInfoCircle,
   IconKey,
@@ -41,8 +42,16 @@ import { GitHubAccount } from './GitHubAccount.js';
 import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
 import { Providers } from './Providers.js';
+import { Updates } from './Updates.js';
 import { Users } from './Users.js';
-import { getStatus, listAccounts, logout, type AuthStatus, type User } from './api.js';
+import {
+  getStatus,
+  getUpdateStatus,
+  listAccounts,
+  logout,
+  type AuthStatus,
+  type User,
+} from './api.js';
 import { navigate, useRoute, type Tab } from './router.js';
 
 const SECTIONS = [
@@ -104,6 +113,14 @@ const TABS: {
     adminOnly: true,
     section: 'admin',
   },
+  {
+    value: 'updates',
+    label: 'Updates',
+    hint: 'Update this panel from its stable or nightly channel',
+    icon: IconCloudDownload,
+    adminOnly: true,
+    section: 'admin',
+  },
 ];
 
 function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
@@ -137,6 +154,8 @@ export function App() {
   const [dialog, setDialog] = useState<AccountDialog>(null);
   const [navOpened, nav] = useDisclosure();
   const [pending, setPending] = useState(0);
+  // New commits on this panel's channel, from the updater's last check (it checks on its own).
+  const [behind, setBehind] = useState(0);
 
   useEffect(() => {
     getStatus()
@@ -154,6 +173,10 @@ export function App() {
     if (!isAdmin) return;
     listAccounts()
       .then((r) => setPending(r.filter((x) => x.status === 'pending').length))
+      .catch(() => {});
+    // No updater, or not reachable: no badge.
+    getUpdateStatus()
+      .then((s) => setBehind(s.channel ? (s.remotes[s.channel]?.behind ?? 0) : 0))
       .catch(() => {});
   }, [isAdmin]);
 
@@ -284,6 +307,10 @@ export function App() {
                           <Badge size="sm" circle color="orange">
                             {pending}
                           </Badge>
+                        ) : t.value === 'updates' && behind > 0 ? (
+                          <Badge size="sm" variant="light" tt="none">
+                            new
+                          </Badge>
                         ) : null
                       }
                       active={tab === t.value}
@@ -310,6 +337,7 @@ export function App() {
           {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}
           {tab === 'users' && isAdmin && <Users onChange={setPending} />}
+          {tab === 'updates' && isAdmin && <Updates onBehind={setBehind} />}
         </Container>
       </AppShell.Main>
       <AccountDialogs open={dialog} onClose={() => setDialog(null)} />
