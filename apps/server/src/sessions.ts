@@ -1,7 +1,8 @@
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { agentNote } from './agent-note.js';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
 import type { McpStore } from './mcp-store.js';
 import type { SamplesService } from './samples.js';
@@ -329,6 +330,19 @@ export class SessionManager {
     // Always written, even when empty, so servers removed in the panel do not linger in the file.
     const mcp = this.mcp.projectConfig(projectId, { samples: this.samples.names(projectId) });
     await write('mcp.json', mcp.config);
+    // AGENTS.md in the agent dir is pi's global context. Removed when the project has no repository,
+    // so unlinking one does not leave stale instructions behind.
+    const link = this.db
+      .prepare('SELECT repo, repo_host FROM projects WHERE id = ?')
+      .get(projectId) as { repo: string | null; repo_host: string | null } | undefined;
+    const note = agentNote(link?.repo ?? null, link?.repo_host ?? null);
+    if (note) {
+      const tmp = join(dir, 'AGENTS.md.tmp');
+      await writeFile(tmp, note, { mode: 0o644 });
+      await rename(tmp, join(dir, 'AGENTS.md'));
+    } else {
+      await rm(join(dir, 'AGENTS.md'), { force: true });
+    }
     return mcp;
   }
 
