@@ -216,8 +216,14 @@ export class FakePiProcess implements RunningProcess {
     this.send({ type: 'turn_start' });
     this.send({ type: 'message_start', message: user });
     this.send({ type: 'message_end', message: user });
-    const reply = message === '/hang' ? '' : `You said: ${message}`;
-    const assistant = { role: 'assistant', content: [{ type: 'text', text: reply }] };
+    // "/fail <text>" ends the turn like a rejected model call: no text, stopReason "error".
+    const failure = message.startsWith('/fail ') ? message.slice(6) : null;
+    const reply = message === '/hang' || failure !== null ? '' : `You said: ${message}`;
+    const assistant = {
+      role: 'assistant',
+      content: failure !== null ? [] : [{ type: 'text', text: reply }],
+      ...(failure !== null ? { stopReason: 'error', errorMessage: failure } : {}),
+    };
     this.send({ type: 'message_start', message: { ...assistant, content: [] } });
     if (message === '/hang') {
       while (!run.aborted && !this.dead) await tick();

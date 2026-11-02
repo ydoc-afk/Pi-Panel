@@ -357,6 +357,30 @@ export class SessionManager {
     return seq;
   }
 
+  /**
+   * A failed model call ends the assistant message with stopReason "error". Remember it on the
+   * provider so the Providers page and dashboard show it, and say so in this session too. A
+   * finished call clears the mark. Aborts are the user's own doing, not a provider fault.
+   */
+  private trackProviderHealth(id: number, event: PiEvent) {
+    const msg = event.message as
+      { role?: string; stopReason?: string; errorMessage?: string } | undefined;
+    if (msg?.role !== 'assistant') return;
+    const row = this.db.prepare('SELECT provider_id FROM sessions WHERE id = ?').get(id) as
+      { provider_id: number | null } | undefined;
+    if (!row?.provider_id) return;
+    if (msg.stopReason === 'error' || msg.errorMessage) {
+      const health = this.providers.recordFailure(row.provider_id, msg.errorMessage ?? '');
+      this.record(id, {
+        type: 'panel_notice',
+        level: 'error',
+        message: `Model provider error: ${health.message}`,
+      });
+    } else if (msg.stopReason !== 'aborted') {
+      this.providers.clearFailure(row.provider_id);
+    }
+  }
+
   private record(id: number, event: PiEvent) {
     const seq = this.nextSeq(id);
     if (!EPHEMERAL.has(event.type)) {
@@ -366,6 +390,7 @@ export class SessionManager {
         )
         .run(id, seq, JSON.stringify(event), Date.now());
     }
+    if (event.type === 'message_end') this.trackProviderHealth(id, event);
     if (event.type === 'agent_start') this.setStatus(id, 'running');
     else if (event.type === 'agent_settled') this.setStatus(id, 'idle');
     for (const send of this.listeners.get(id) ?? []) send({ seq, event });

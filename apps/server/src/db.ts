@@ -151,6 +151,18 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
       addMissingColumns(db, 'projects', { repo_host: 'TEXT' });
     },
   },
+  {
+    // The last model-call failure per provider (cleared by the next success), so a rejected key
+    // shows on the Providers page and the dashboard and not only inside one session's transcript.
+    version: 5,
+    name: 'last model-call failure per provider',
+    up: (db) =>
+      addMissingColumns(db, 'providers', {
+        last_error: 'TEXT',
+        last_error_status: 'INTEGER',
+        last_error_at: 'INTEGER',
+      }),
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {

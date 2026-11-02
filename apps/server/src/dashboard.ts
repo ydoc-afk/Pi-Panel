@@ -36,6 +36,7 @@ interface EventRow {
   role: string | null;
   tool: string | null;
   is_error: number | null;
+  stop_reason: string | null;
   created_at: number | null;
   message_ts: number | null;
 }
@@ -94,6 +95,7 @@ export async function buildDashboard(
               json_extract(e.data, '$.message.role') AS role,
               json_extract(e.data, '$.toolName') AS tool,
               json_extract(e.data, '$.isError') AS is_error,
+              json_extract(e.data, '$.message.stopReason') AS stop_reason,
               e.created_at,
               CASE WHEN e.created_at IS NULL
                    THEN json_extract(e.data, '$.message.timestamp') END AS message_ts
@@ -130,6 +132,9 @@ export async function buildDashboard(
       const name = typeof e.tool === 'string' && e.tool ? e.tool : 'unknown';
       tools.set(name, (tools.get(name) ?? 0) + 1);
     } else if ((e.type === 'tool_execution_end' && e.is_error) || e.type === 'panel_process_exit') {
+      bucket.errors++;
+    } else if (e.type === 'message_end' && e.stop_reason === 'error') {
+      // A failed model call (rejected key, rate limit, server down) ends an assistant message.
       bucket.errors++;
     }
   }
@@ -226,6 +231,7 @@ export async function buildDashboard(
       withKey: providers.filter((p) => p.hasKey).length,
       models: providers.reduce((n, p) => n + p.models.length, 0),
       warnings: providers.filter((p) => p.warning).length,
+      failing: providers.filter((p) => p.health).length,
     },
     mcp: {
       total: servers.length,

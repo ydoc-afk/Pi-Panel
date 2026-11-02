@@ -38,6 +38,44 @@ interface ProviderRow {
   api_key_enc: string | null;
   models: string;
   created_at: number;
+  last_error?: string | null;
+  last_error_status?: number | null;
+  last_error_at?: number | null;
+}
+
+/** The newest model-call failure for a provider, until a call succeeds again. */
+export interface ProviderHealth {
+  /** Short explanation for the UI. */
+  message: string;
+  /** HTTP status when the error text carried one. */
+  status: number | null;
+  at: number;
+}
+
+/**
+ * Turns the error text pi reports for a failed model call into something actionable. pi forwards
+ * the provider's own text ("Provider returned HTTP 401", "429 rate limited", ...), so the status
+ * is read out of it.
+ */
+export function describeProviderError(raw: string): { message: string; status: number | null } {
+  const text = raw.trim().slice(0, 500);
+  const status = /\b(?:HTTP\s*)?([45]\d\d)\b/i.exec(text)?.[1];
+  const code = status ? Number(status) : null;
+  let message = text || 'The model returned an error';
+  if (code === 401 || code === 403) {
+    message = `The provider rejected the API key (HTTP ${code}). Check or replace the key on this provider.`;
+  } else if (code === 404) {
+    message = 'The provider returned HTTP 404. Check the base URL and that the model exists.';
+  } else if (code === 429) {
+    message = 'The provider is rate limiting requests (HTTP 429).';
+  } else if (code !== null && code >= 500) {
+    message = `The provider reported a server error (HTTP ${code}): ${text}`;
+  } else if (
+    /ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT|fetch failed|connection error/i.test(text)
+  ) {
+    message = `The provider could not be reached: ${text}`;
+  }
+  return { message, status: code };
 }
 
 export interface Provider {
@@ -49,6 +87,7 @@ export interface Provider {
   hasKey: boolean;
   models: string[];
   warning?: string;
+  health?: ProviderHealth;
 }
 
 interface Input {
@@ -121,7 +160,34 @@ export class ProviderStore {
       p.warning =
         'localhost inside the sandbox container is not your machine. Use host.docker.internal to reach a server on the Docker host.';
     }
+    if (r.last_error && r.last_error_at) {
+      p.health = {
+        message: r.last_error,
+        status: r.last_error_status ?? null,
+        at: r.last_error_at,
+      };
+    }
     return p;
+  }
+
+  /** Remembers that a model call through this provider failed. */
+  recordFailure(id: number, raw: string, now = Date.now()): ProviderHealth {
+    const { message, status } = describeProviderError(raw);
+    this.db
+      .prepare(
+        'UPDATE providers SET last_error = ?, last_error_status = ?, last_error_at = ? WHERE id = ?',
+      )
+      .run(message, status, now, id);
+    return { message, status, at: now };
+  }
+
+  /** A model call went through, so the earlier failure no longer applies. */
+  clearFailure(id: number) {
+    this.db
+      .prepare(
+        'UPDATE providers SET last_error = NULL, last_error_status = NULL, last_error_at = NULL WHERE id = ? AND last_error IS NOT NULL',
+      )
+      .run(id);
   }
 
   list(): Provider[] {

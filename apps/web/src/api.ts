@@ -142,6 +142,8 @@ export interface Provider {
   hasKey: boolean;
   models: string[];
   warning?: string;
+  /** The newest failed model call through this provider, until one succeeds. */
+  health?: { message: string; status: number | null; at: number };
 }
 
 export interface ProviderInput {
@@ -656,7 +658,13 @@ export interface DashboardData {
   sessions: { total: number; running: number; errored: number; recent: DashboardSession[] };
   models: { model: string; sessions: number }[];
   tools: { name: string; calls: number }[];
-  providers: { total: number; withKey: number; models: number; warnings: number };
+  providers: {
+    total: number;
+    withKey: number;
+    models: number;
+    warnings: number;
+    failing: number;
+  };
   mcp: { total: number; connected: number; failing: number; untested: number; tools: number };
   github: { connected: boolean; login: string | null };
   forgejo: { connected: boolean; login: string | null };
