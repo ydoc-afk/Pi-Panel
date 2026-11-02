@@ -367,7 +367,15 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
   const lastSeq = useRef(0);
   const history = useRef<string[]>([]);
   const screen = useRef<HTMLDivElement>(null);
+  const prompt = useRef<HTMLTextAreaElement>(null);
   lastSeq.current = Math.max(lastSeq.current, t.lastSeq);
+
+  // Typing should go straight into the session: without this, keys land on whatever button was
+  // clicked to open it (Enter on "New session" would start another one). The view is keyed by
+  // session, so this runs once for each session opened.
+  useEffect(() => {
+    prompt.current?.focus({ preventScroll: true });
+  }, []);
 
   // An extension asked to put text in the prompt box (only when it changed, not on every render).
   const editorSeq = t.ui.editorText?.seq;
@@ -586,6 +594,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
           <div style={{ display: 'flex', alignItems: 'flex-start', marginTop: 6 }}>
             <span style={{ color: TERM.prompt, fontWeight: 600, whiteSpace: 'pre' }}>❯ </span>
             <Textarea
+              ref={prompt}
               variant="unstyled"
               autosize
               minRows={1}
