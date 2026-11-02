@@ -87,7 +87,7 @@ describe('dashboard endpoint', () => {
     expect(d.sessions).toMatchObject({ total: 0, running: 0, recent: [] });
     expect(d.models).toEqual([]);
     expect(d.tools).toEqual([]);
-    expect(d.providers).toEqual({ total: 0, withKey: 0, models: 0, warnings: 0 });
+    expect(d.providers).toEqual({ total: 0, withKey: 0, models: 0, warnings: 0, failing: 0 });
     expect(d.mcp).toMatchObject({ total: 0, connected: 0, tools: 0 });
     expect(d.github).toEqual({ connected: false, login: null });
     expect(d.forgejo).toEqual({ connected: false, login: null });

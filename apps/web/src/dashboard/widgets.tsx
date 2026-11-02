@@ -219,11 +219,17 @@ function healthChecks({ data: d, nav, isAdmin }: WidgetContext): Check[] {
     },
     {
       label: 'Providers',
-      level: d.providers.total === 0 ? 'warning' : d.providers.warnings > 0 ? 'warning' : 'ok',
+      level:
+        d.providers.failing > 0
+          ? 'critical'
+          : d.providers.total === 0 || d.providers.warnings > 0
+            ? 'warning'
+            : 'ok',
       detail:
         d.providers.total === 0
           ? 'No model provider yet'
           : `${plural(d.providers.total, 'provider')}, ${plural(d.providers.models, 'model')}` +
+            (d.providers.failing ? `, ${d.providers.failing} failing (see Providers)` : '') +
             (d.providers.warnings ? `, ${plural(d.providers.warnings, 'warning')}` : ''),
       open: admin('providers'),
     },
