@@ -1,4 +1,4 @@
-import { Badge, Checkbox, Stack, Text } from '@mantine/core';
+import { Badge, Button, Checkbox, Group, Stack, Text } from '@mantine/core';
 import type { McpTool } from './api.js';
 
 /** A checkbox per tool: checked means the model can use it, unchecked hides it. */
@@ -20,8 +20,32 @@ export function McpToolList({
     else next.add(name);
     onChange([...next]);
   };
+  const shown = tools.filter((t) => !hiddenSet.has(t.name)).length;
   return (
     <Stack gap="xs" my="xs">
+      {tools.length > 1 && (
+        <Group gap="xs">
+          <Button
+            size="compact-xs"
+            variant="default"
+            disabled={disabled || shown === tools.length}
+            onClick={() => onChange([])}
+          >
+            All
+          </Button>
+          <Button
+            size="compact-xs"
+            variant="default"
+            disabled={disabled || shown === 0}
+            onClick={() => onChange(tools.map((t) => t.name))}
+          >
+            None
+          </Button>
+          <Text size="xs" c="dimmed">
+            {shown} of {tools.length} enabled
+          </Text>
+        </Group>
+      )}
       {tools.map((t) => (
         <Checkbox
           key={t.name}
