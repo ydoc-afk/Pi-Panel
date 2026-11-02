@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:?run ./setup.sh to create .env}
       POSTGRES_DB: forgejo
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - ${DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U forgejo -d forgejo']
       interval: 5s
@@ -54,7 +54,7 @@ services:
       FORGEJO__mailer__ENABLED: 'false'
       FORGEJO__log__LEVEL: Info
     volumes:
-      - ./data/forgejo:/data
+      - ${DATA_DIR:-./data}/forgejo:/data
       - /etc/localtime:/etc/localtime:ro
     ports:
       - '${HTTP_PORT:-3001}:3000'
@@ -79,7 +79,7 @@ services:
       FORGEJO_INSTANCE: http://forgejo:3000
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
-      - ./data/runner:/data
+      - ${DATA_DIR:-./data}/runner:/data
       - ./runner/entrypoint.sh:/entrypoint.sh:ro
       - /var/run/docker.sock:/var/run/docker.sock
     entrypoint: ['/bin/sh', '/entrypoint.sh']

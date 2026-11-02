@@ -9,7 +9,8 @@ set_var SECRET_KEY "$(openssl rand -hex 32)"
 set_var RUNNER_SECRET "$(openssl rand -hex 20)"
 set_var PUID "$(id -u)"
 set_var PGID "$(id -g)"
-mkdir -p data/postgres data/forgejo data/runner
+DATA_DIR=$(grep -s "^DATA_DIR=" .env | cut -d= -f2-); DATA_DIR=${DATA_DIR:-./data}
+mkdir -p "$DATA_DIR"/postgres "$DATA_DIR"/forgejo "$DATA_DIR"/runner
 set -a; . ./.env; set +a
 
 docker compose up -d db forgejo

@@ -18,5 +18,5 @@ Workflows in `.forgejo/workflows/*.yml` (GitHub Actions syntax) run on labels `u
 The runner uses the host Docker socket: trusted local use only.
 
 ## Backup / reset
-Everything lives in `./data`. Back up with `docker compose down && tar czf forgejo-backup.tgz data .env`.
+Everything lives in `$DATA_DIR` (default `./data`; set to `/mnt/data/compose/forgejo/data` on this host). Back up with `docker compose down && tar czf forgejo-backup.tgz data .env`.
 Reset: `docker compose --profile ci down && sudo rm -rf data .env`.
