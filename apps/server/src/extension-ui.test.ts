@@ -107,4 +107,14 @@ describe('extension UI over RPC', () => {
     expect(resolved).toMatchObject({ reason: 'timeout' });
     expect((await respond({ id: resolved!.id as string, cancelled: true })).statusCode).toBe(409);
   });
+
+  it('can be deleted while a dialog is open, without a timer writing to the deleted session', async () => {
+    await call('POST', `/api/sessions/${sessionId}/prompt`, { message: '/ui 100' });
+    await until(async () => has((e) => e.method === 'confirm'));
+    const del = await app.inject({ method: 'DELETE', url: `/api/sessions/${sessionId}`, headers });
+    expect(del.statusCode).toBe(204);
+    // The dialog's timer would have fired about a second later; an uncaught error fails the run.
+    await new Promise((r) => setTimeout(r, 1300));
+    expect((await call('GET', `/api/sessions/${sessionId}`)).statusCode).toBe(404);
+  });
 });

@@ -230,9 +230,17 @@ export class SessionManager {
   delete(id: number) {
     this.row(id);
     this.stop(id);
+    this.forgetUi(id);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     this.listeners.delete(id);
     this.seqs.delete(id);
+  }
+
+  /** Drops dialog timers and shown-state without recording anything: the session is going away. */
+  private forgetUi(id: number) {
+    for (const timer of this.uiPending.get(id)?.values() ?? []) if (timer) clearTimeout(timer);
+    this.uiPending.delete(id);
+    this.uiShown.delete(id);
   }
 
   private stopClient(id: number, client: RpcClient) {
@@ -505,11 +513,17 @@ export class SessionManager {
     if (event.type === 'extension_ui_request' && !this.acceptUi(id, event)) return;
     const seq = this.nextSeq(id);
     if (!EPHEMERAL.has(event.type)) {
-      this.db
-        .prepare(
-          'INSERT INTO session_events (session_id, seq, data, created_at) VALUES (?, ?, ?, ?)',
-        )
-        .run(id, seq, JSON.stringify(event), Date.now());
+      try {
+        this.db
+          .prepare(
+            'INSERT INTO session_events (session_id, seq, data, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(id, seq, JSON.stringify(event), Date.now());
+      } catch (err) {
+        // The session was deleted while pi was still emitting (or a timer fired): nothing to keep.
+        if ((err as { errcode?: number }).errcode === 787) return;
+        throw err;
+      }
     }
     if (event.type === 'message_end') this.trackProviderHealth(id, event);
     if (event.type === 'agent_start') this.setStatus(id, 'running');
