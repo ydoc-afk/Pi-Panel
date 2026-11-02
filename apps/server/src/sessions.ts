@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
@@ -9,8 +9,6 @@ import type { SidecarManager } from './sidecars.js';
 import type { ProviderStore } from './providers.js';
 import { RpcClient, type PiEvent } from './rpc-client.js';
 import type { ContainerRuntime } from './runtime.js';
-
-const SCHEMA_SANITIZER = new URL('../assets/schema-sanitizer.js', import.meta.url);
 
 export class SessionError extends Error {
   constructor(
@@ -328,13 +326,6 @@ export class SessionManager {
       await rename(tmp, join(dir, name));
     };
     await write('models.json', this.providers.modelsJson());
-    // Simplifies tool schemas in outgoing requests so llama.cpp-style servers can build a grammar.
-    await mkdir(join(dir, 'extensions'), { recursive: true });
-    await writeFile(
-      join(dir, 'extensions', 'panel-schema-sanitizer.js'),
-      await readFile(SCHEMA_SANITIZER),
-      { mode: 0o644 },
-    );
     // Always written, even when empty, so servers removed in the panel do not linger in the file.
     const mcp = this.mcp.projectConfig(projectId, { samples: this.samples.names(projectId) });
     await write('mcp.json', mcp.config);
