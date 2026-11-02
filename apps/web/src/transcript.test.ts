@@ -107,4 +107,77 @@ describe('transcript', () => {
       ].join('\n'),
     );
   });
+
+  describe('extension UI', () => {
+    const req = (fields: Record<string, unknown>) => ({
+      type: 'extension_ui_request',
+      id: 'x',
+      ...fields,
+    });
+
+    it('keeps statuses and widgets by key, strips colour codes, and clears them', () => {
+      const t = feed([
+        req({
+          method: 'setStatus',
+          statusKey: 'lsp',
+          statusText: '\u001b[38;5;2mLSP Active\u001b[39m',
+        }),
+        req({ method: 'setWidget', widgetKey: 'w', widgetLines: ['a', '\u001b[1mb\u001b[22m'] }),
+        req({
+          method: 'setWidget',
+          widgetKey: 'b',
+          widgetLines: ['below'],
+          widgetPlacement: 'belowEditor',
+        }),
+        req({ method: 'setTitle', title: 'pi - proj' }),
+      ]);
+      expect(t.ui.statuses).toEqual({ lsp: 'LSP Active' });
+      expect(t.ui.widgets.w).toEqual({ lines: ['a', 'b'], placement: 'above' });
+      expect(t.ui.widgets.b!.placement).toBe('below');
+      expect(t.ui.title).toBe('pi - proj');
+
+      const cleared = feed([
+        req({ method: 'setStatus', statusKey: 'lsp', statusText: 'on' }),
+        req({ method: 'setStatus', statusKey: 'lsp' }),
+        req({ method: 'setWidget', widgetKey: 'w', widgetLines: ['a'] }),
+        req({ method: 'setWidget', widgetKey: 'w' }),
+      ]);
+      expect(cleared.ui.statuses).toEqual({});
+      expect(cleared.ui.widgets).toEqual({});
+    });
+
+    it('opens a dialog until it is resolved, and forgets everything on reset', () => {
+      const open = feed([
+        req({ id: 'q1', method: 'select', title: 'Pick', options: ['A', 'B', 3] }),
+        req({ id: 'q1', method: 'select', title: 'Pick', options: ['A', 'B'] }),
+        req({ id: 'q2', method: 'confirm', title: 'Sure?', message: 'really' }),
+        req({ method: 'setStatus', statusKey: 's', statusText: 'on' }),
+      ]);
+      expect(open.ui.dialogs.map((d) => d.id)).toEqual(['q1', 'q2']);
+      expect(open.ui.dialogs[0]!.options).toEqual(['A', 'B']);
+
+      const after = [{ type: 'panel_ui_resolved', id: 'q1' }].reduce<Transcript>(
+        (t, event, i) => applyMessage(t, { seq: 100 + i, event }),
+        open,
+      );
+      expect(after.ui.dialogs.map((d) => d.id)).toEqual(['q2']);
+
+      const reset = applyMessage(open, { seq: 200, event: { type: 'panel_ui_reset' } });
+      expect(reset.ui).toEqual(emptyTranscript.ui);
+    });
+
+    it('turns notify into a transcript line and spends a prompt prefill once sent', () => {
+      const t = feed([
+        req({ method: 'notify', message: 'careful', notifyType: 'warning' }),
+        req({ method: 'set_editor_text', text: 'draft' }),
+      ]);
+      expect(t.items).toEqual([{ kind: 'notice', text: '⚠ careful' }]);
+      expect(t.ui.editorText?.text).toBe('draft');
+      const sent = applyMessage(t, {
+        seq: 50,
+        event: { type: 'message_end', message: { role: 'user', content: 'draft' } },
+      });
+      expect(sent.ui.editorText).toBeNull();
+    });
+  });
 });

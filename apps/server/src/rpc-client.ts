@@ -85,6 +85,12 @@ export class RpcClient {
     });
   }
 
+  /** Writes a message pi does not answer with a response record (such as an extension UI reply). */
+  send(message: { type: string } & Record<string, unknown>) {
+    if (this.closed) throw new Error('pi process has exited');
+    this.proc.write(JSON.stringify(message) + '\n');
+  }
+
   /** Terminates the process; pending requests are rejected via the exit handler. */
   close() {
     this.proc.kill();

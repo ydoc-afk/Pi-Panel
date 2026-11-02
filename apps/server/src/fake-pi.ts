@@ -186,6 +186,10 @@ export class FakePiProcess implements RunningProcess {
         await this.runPrompt(cmd.message);
         return;
       }
+      case 'extension_ui_response':
+        // Answers to dialogs the fake asked; pi sends no response record for these.
+        this.uiAnswers.set(String(cmd.id), cmd);
+        return;
       case 'set_model':
         if (cmd.modelId === 'missing-model') {
           this.respond(id, 'set_model', false, {
@@ -208,6 +212,9 @@ export class FakePiProcess implements RunningProcess {
     }
   }
 
+  private uiSeq = 0;
+  private readonly uiAnswers = new Map<string, Record<string, unknown>>();
+
   private async runPrompt(message: string) {
     const run = { aborted: false };
     this.run = run;
@@ -216,6 +223,40 @@ export class FakePiProcess implements RunningProcess {
     this.send({ type: 'turn_start' });
     this.send({ type: 'message_start', message: user });
     this.send({ type: 'message_end', message: user });
+    // "/ui [timeout-ms]" shows extension UI: a repeated status, a widget, a clear of nothing, then a
+    // confirm dialog it waits on (or times out of, like pi does).
+    if (message.startsWith('/ui')) {
+      const timeout = Number(message.slice(3)) || undefined;
+      const ui = (fields: object) =>
+        this.send({ type: 'extension_ui_request', id: `ui-${++this.uiSeq}`, ...fields });
+      ui({
+        method: 'setStatus',
+        statusKey: 'lsp',
+        statusText: '\u001b[38;5;2mLSP Active\u001b[39m',
+      });
+      ui({
+        method: 'setStatus',
+        statusKey: 'lsp',
+        statusText: '\u001b[38;5;2mLSP Active\u001b[39m',
+      });
+      ui({ method: 'setWidget', widgetKey: 'tasks', widgetLines: ['one', 'two'] });
+      ui({ method: 'setWidget', widgetKey: 'ghost' });
+      const askId = `ui-${++this.uiSeq}`;
+      this.send({
+        type: 'extension_ui_request',
+        id: askId,
+        method: 'confirm',
+        title: 'Allow it?',
+        message: 'Really?',
+        ...(timeout ? { timeout } : {}),
+      });
+      const waitUntil = Date.now() + (timeout ?? 60_000);
+      while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead && Date.now() < waitUntil) {
+        await tick();
+      }
+      const answer = this.uiAnswers.get(askId);
+      message = `answer: ${answer ? JSON.stringify({ ...answer, id: undefined }) : 'none'}`;
+    }
     const reply = message === '/hang' ? '' : `You said: ${message}`;
     const assistant = { role: 'assistant', content: [{ type: 'text', text: reply }] };
     this.send({ type: 'message_start', message: { ...assistant, content: [] } });

@@ -122,6 +122,11 @@ export const sendPrompt = (id: number, message: string, streamingBehavior?: 'ste
     `/api/sessions/${id}/prompt`,
     json({ message, streamingBehavior }),
   );
+/** Answers a question an extension asked: exactly one of value, confirmed or cancelled. */
+export const respondUi = (
+  id: number,
+  answer: { id: string } & ({ value: string } | { confirmed: boolean } | { cancelled: true }),
+) => request<{ ok: true }>(`/api/sessions/${id}/ui-response`, json(answer));
 export const abortSession = (id: number) =>
   request<{ ok: true }>(`/api/sessions/${id}/abort`, json({}));
 export const fetchEvents = async (id: number, after: number) =>

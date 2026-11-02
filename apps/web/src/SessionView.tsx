@@ -10,6 +10,7 @@ import {
   type Transcript,
 } from './transcript.js';
 import type { StreamMessage } from './api.js';
+import { ExtensionDialog, ExtensionStatus, ExtensionWidgets } from './ExtensionUi.js';
 import { ErrorText, Tip } from './ui.js';
 import { parseBlocks, parseSpans } from './termMarkdown.js';
 
@@ -367,6 +368,12 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
   const screen = useRef<HTMLDivElement>(null);
   lastSeq.current = Math.max(lastSeq.current, t.lastSeq);
 
+  // An extension asked to put text in the prompt box (only when it changed, not on every render).
+  const editorSeq = t.ui.editorText?.seq;
+  useEffect(() => {
+    if (t.ui.editorText) setText(t.ui.editorText.text);
+  }, [editorSeq]);
+
   useEffect(() => {
     push('reset');
     lastSeq.current = 0;
@@ -573,6 +580,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
               ● thinking…
             </div>
           )}
+          <ExtensionWidgets ui={t.ui} placement="above" dim={TERM.dim} border={TERM.border} />
           <div style={{ display: 'flex', alignItems: 'flex-start', marginTop: 6 }}>
             <span style={{ color: TERM.prompt, fontWeight: 600, whiteSpace: 'pre' }}>❯ </span>
             <Textarea
@@ -604,6 +612,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
               }}
             />
           </div>
+          <ExtensionWidgets ui={t.ui} placement="below" dim={TERM.dim} border={TERM.border} />
         </div>
         {!following && (
           <Button
@@ -619,6 +628,8 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
         )}
       </div>
       <ErrorText error={error} />
+      <ExtensionStatus ui={t.ui} />
+      <ExtensionDialog sessionId={sessionId} dialog={t.ui.dialogs[0]} />
       <Group gap="xs">
         {t.running && (
           <>
