@@ -51,6 +51,7 @@ import { ProjectStatusBadge } from './ProjectStatusBadge.js';
 import { navigate } from './router.js';
 import { SessionView } from './SessionView.js';
 import { EmptyState, ErrorText, FlatSection, StatusBadge, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 /** How often the session list refreshes, so running/idle badges stay current. */
 const POLL_MS = 3000;
@@ -167,10 +168,10 @@ export function ProjectView({
   async function containerAction(action: 'restart' | 'recreate') {
     if (
       action === 'recreate' &&
-      !confirm(
+      !(await askConfirm(
         'Replace the container with a fresh one from the current sandbox image? Running sessions stop. ' +
           'Workspace files and session history are kept; anything installed elsewhere in the container is not.',
-      )
+      ))
     ) {
       return;
     }
@@ -212,7 +213,7 @@ export function ProjectView({
   }
 
   async function remove(s: Session) {
-    if (!confirm(`Delete "${s.name}" and its transcript?`)) return;
+    if (!(await askConfirm(`Delete "${s.name}" and its transcript?`))) return;
     try {
       await deleteSession(s.id);
       if (sessionId === s.id) select(undefined);

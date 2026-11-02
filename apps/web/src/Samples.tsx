@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button, Code, FileInput, Group, Stack, Text } from '@mantine/core';
 import { deleteSample, listSamples, uploadSample, type SampleFile } from './api.js';
 import { Collapsible, ErrorText } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const size = (n: number) =>
   n < 1024
@@ -72,11 +73,12 @@ export function Samples({ projectId }: { projectId: number }) {
               variant="subtle"
               color="red"
               onClick={() => {
-                if (confirm(`Delete ${f.name}?`)) {
+                void askConfirm(`Delete ${f.name}?`).then((ok) => {
+                  if (!ok) return;
                   void deleteSample(projectId, f.name)
                     .then(refresh)
                     .catch((e: Error) => setError(e.message));
-                }
+                });
               }}
             >
               Delete

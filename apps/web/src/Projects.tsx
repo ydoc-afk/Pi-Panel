@@ -34,6 +34,7 @@ import {
 import { ProjectStatusBadge } from './ProjectStatusBadge.js';
 import { navigate } from './router.js';
 import { EmptyState, ErrorText, PageHeader, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const created = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -228,8 +229,9 @@ export function Projects({ projectId, sessionId }: { projectId?: number; session
               onOpen={() => navigate({ tab: 'projects', projectId: p.id })}
               onStart={() => void run(() => restartProject(p.id))}
               onDelete={() => {
-                if (confirm(`Delete "${p.name}" and its workspace?`))
-                  void run(() => deleteProject(p.id));
+                void askConfirm(`Delete "${p.name}" and its workspace?`).then((ok) => {
+                  if (ok) void run(() => deleteProject(p.id));
+                });
               }}
             />
           ))}

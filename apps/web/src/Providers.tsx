@@ -33,6 +33,7 @@ import {
 } from './api.js';
 import { EmptyState, ErrorText, PageHeader, Tip } from './ui.js';
 import { timeAgo } from './dashboard/charts.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 // Mirrors the server's rule for provider names.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
@@ -356,8 +357,9 @@ export function Providers() {
                           variant="subtle"
                           color="red"
                           onClick={() => {
-                            if (confirm(`Delete provider "${p.name}"?`))
-                              void act(() => deleteProvider(p.id));
+                            void askConfirm(`Delete provider "${p.name}"?`).then((ok) => {
+                              if (ok) void act(() => deleteProvider(p.id));
+                            });
                           }}
                         >
                           Delete

@@ -34,6 +34,7 @@ import { ReaBuilder } from './ReaBuilder.js';
 import { RegistryBrowser, registryNotes, registryPreset } from './RegistryBrowser.js';
 import { McpToolList } from './McpToolList.js';
 import { Collapsible, EmptyState, ErrorText, mono, PageHeader, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const TYPE_INFO = {
   stdio: { label: 'Command', icon: IconTerminal },
@@ -347,12 +348,15 @@ export function McpServers() {
                     variant="subtle"
                     color="red"
                     onClick={() => {
-                      if (confirm(`Delete "${s.name}" from the library and from every project?`)) {
+                      void askConfirm(
+                        `Delete "${s.name}" from the library and from every project?`,
+                      ).then((ok) => {
+                        if (!ok) return;
                         void act(async () => {
                           await deleteMcpServer(s.id);
                           await refresh();
                         });
-                      }
+                      });
                     }}
                   >
                     Delete

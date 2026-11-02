@@ -9,6 +9,7 @@ import {
   type AccountRow,
 } from './api.js';
 import { ErrorText, PageHeader, StatusBadge, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 /** Admin only: review registrations and decide who can sign in. */
 export function Users({ onChange }: { onChange?: (pending: number) => void }) {
@@ -135,8 +136,9 @@ export function Users({ onChange }: { onChange?: (pending: number) => void }) {
                             leftSection={<IconTrash size={14} />}
                             disabled={busy === u.id}
                             onClick={() => {
-                              if (confirm(`Delete the account "${u.username}"?`))
-                                void act(u.id, () => removeAccount(u.id));
+                              void askConfirm(`Delete the account "${u.username}"?`).then((ok) => {
+                                if (ok) void act(u.id, () => removeAccount(u.id));
+                              });
                             }}
                           >
                             Delete

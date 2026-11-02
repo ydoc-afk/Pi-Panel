@@ -27,6 +27,7 @@ import {
   type GitHubAccount as Account,
 } from './api.js';
 import { ErrorText, PageHeader, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 export function GitHubAccount({ forge = 'github' }: { forge?: Forge }) {
   const forgejo = forge === 'forgejo';
@@ -128,9 +129,12 @@ export function GitHubAccount({ forge = 'github' }: { forge?: Forge }) {
                 variant="subtle"
                 color="red"
                 onClick={() => {
-                  if (confirm(`Disconnect ${name}? Stored token will be deleted.`)) {
-                    void disconnectGitHub(forge).then(() => setAccount({ connected: false }));
-                  }
+                  void askConfirm(`Disconnect ${name}? Stored token will be deleted.`).then(
+                    (ok) => {
+                      if (ok)
+                        void disconnectGitHub(forge).then(() => setAccount({ connected: false }));
+                    },
+                  );
                 }}
               >
                 Disconnect
