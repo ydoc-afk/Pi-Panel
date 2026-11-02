@@ -180,4 +180,49 @@ describe('transcript', () => {
       expect(sent.ui.editorText).toBeNull();
     });
   });
+
+  describe('todo list', () => {
+    const todoEnd = (tasks: unknown[], extra: Record<string, unknown> = {}) => ({
+      type: 'tool_execution_end',
+      toolCallId: 'c',
+      toolName: 'todo',
+      isError: false,
+      result: { content: [{ type: 'text', text: 'ok' }], details: { tasks } },
+      ...extra,
+    });
+
+    it('keeps the list from the newest todo result and drops deleted tasks', () => {
+      const t = feed([
+        todoEnd([{ id: 1, subject: 'One', status: 'pending' }]),
+        todoEnd([
+          { id: 1, subject: 'One', status: 'completed' },
+          { id: 2, subject: 'Two', status: 'in_progress', activeForm: 'doing two' },
+          { id: 3, subject: 'Gone', status: 'deleted' },
+          { id: 4, status: 'pending' },
+        ]),
+      ]);
+      expect(t.tasks).toEqual([
+        { id: '1', subject: 'One', status: 'completed' },
+        { id: '2', subject: 'Two', status: 'in_progress', activeForm: 'doing two' },
+      ]);
+    });
+
+    it('ignores failed todo calls and other tools', () => {
+      const t = feed([
+        todoEnd([{ id: 1, subject: 'One', status: 'pending' }]),
+        todoEnd([], { isError: true }),
+        { ...todoEnd([]), toolName: 'bash' },
+      ]);
+      expect(t.tasks).toHaveLength(1);
+    });
+
+    it('summarises todo calls as what they do, not as JSON', () => {
+      expect(toolSummary('todo', { action: 'update', id: 3, status: 'in_progress' })).toBe(
+        'update #3 in_progress',
+      );
+      expect(toolSummary('todo', { action: 'create', subject: 'Write it' })).toBe(
+        'create Write it',
+      );
+    });
+  });
 });

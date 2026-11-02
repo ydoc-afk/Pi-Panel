@@ -37,6 +37,15 @@ export interface UiState {
   editorText: { text: string; seq: number } | null;
 }
 
+/** One entry of the agent's todo list, as the todo tool reports it. */
+export interface Task {
+  id: string;
+  subject: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  /** Shown while the task is in progress ("writing the report"). */
+  activeForm?: string;
+}
+
 export const emptyUi: UiState = {
   statuses: {},
   widgets: {},
@@ -52,6 +61,8 @@ export interface Transcript {
   running: boolean;
   lastSeq: number;
   ui: UiState;
+  /** The agent's current todo list: every todo tool result carries the whole list. */
+  tasks: Task[];
 }
 
 export const emptyTranscript: Transcript = {
@@ -60,6 +71,7 @@ export const emptyTranscript: Transcript = {
   running: false,
   lastSeq: 0,
   ui: emptyUi,
+  tasks: [],
 };
 
 const MAX_OUTPUT = 20_000;
@@ -78,6 +90,28 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '');
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 export const stripAnsi = (text: string) => text.replace(ANSI, '');
+
+/** The task list inside a todo tool result, or undefined if the result carries none. */
+function tasksFrom(result: unknown): Task[] | undefined {
+  const details = (result as { details?: { tasks?: unknown } } | undefined)?.details;
+  if (!Array.isArray(details?.tasks)) return undefined;
+  const out: Task[] = [];
+  for (const raw of details.tasks) {
+    const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+    const status = r.status;
+    if (typeof r.subject !== 'string' || !r.subject) continue;
+    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed') continue; // e.g. deleted
+    out.push({
+      id: String(r.id ?? out.length + 1),
+      subject: r.subject.slice(0, 300),
+      status,
+      ...(typeof r.activeForm === 'string' && r.activeForm
+        ? { activeForm: r.activeForm.slice(0, 300) }
+        : {}),
+    });
+  }
+  return out;
+}
 
 /** Folds one extension_ui_request into the UI state; notify becomes a line in the transcript. */
 function applyUiRequest(t: Transcript, e: Record<string, unknown>, seq: number): Transcript {
@@ -151,6 +185,14 @@ export function toolSummary(name: string, args: unknown): string {
     case 'ls':
       s = str(a.path) || str(a.file_path);
       break;
+    case 'todo': {
+      // "update #3 in_progress", "create Write the report": what the call does, not its JSON.
+      const detail = [a.id !== undefined ? `#${String(a.id)}` : '', str(a.status), str(a.subject)]
+        .filter(Boolean)
+        .join(' ');
+      s = [str(a.action), detail].filter(Boolean).join(' ');
+      break;
+    }
     case 'grep':
     case 'find':
       s = [str(a.pattern) || str(a.glob), str(a.path)].filter(Boolean).join(' in ');
@@ -235,6 +277,8 @@ export function applyMessage(t: Transcript, m: StreamMessage): Transcript {
       const state = e.isError ? 'failed' : 'done';
       const output = resultText(e.result);
       const callId = str(e.toolCallId);
+      const tasks = e.toolName === 'todo' && !e.isError ? tasksFrom(e.result) : undefined;
+      if (tasks) next.tasks = tasks;
       let i = -1;
       for (let j = t.items.length - 1; j >= 0; j--) {
         const it = t.items[j]!;

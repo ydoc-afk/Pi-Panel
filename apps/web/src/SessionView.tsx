@@ -11,6 +11,7 @@ import {
 } from './transcript.js';
 import type { StreamMessage } from './api.js';
 import { ExtensionDialog, ExtensionStatus, ExtensionWidgets } from './ExtensionUi.js';
+import { TaskList } from './TaskList.js';
 import { ErrorText, Tip } from './ui.js';
 import { parseBlocks, parseSpans } from './termMarkdown.js';
 
@@ -580,6 +581,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
               ● thinking…
             </div>
           )}
+          <TaskList tasks={t.tasks} colors={TERM} />
           <ExtensionWidgets ui={t.ui} placement="above" dim={TERM.dim} border={TERM.border} />
           <div style={{ display: 'flex', alignItems: 'flex-start', marginTop: 6 }}>
             <span style={{ color: TERM.prompt, fontWeight: 600, whiteSpace: 'pre' }}>❯ </span>
