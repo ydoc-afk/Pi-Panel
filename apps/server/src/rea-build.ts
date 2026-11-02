@@ -38,6 +38,28 @@ export class ReaBuildError extends Error {
   }
 }
 
+/** The Ghidra line REA 6.8.0 accepts; any other release leaves the Ghidra provider unavailable. */
+export const SUPPORTED_GHIDRA_LINE = '12.1';
+
+/**
+ * Release zips are named ghidra_<version>_PUBLIC_<date>.zip. When the name carries a version that is
+ * not on the supported line, refuse it now rather than after a long build that analyses nothing.
+ */
+function checkGhidraVersion(url: URL) {
+  const found = /ghidra_(\d+\.\d+(?:\.\d+)?)_PUBLIC/i.exec(decodeURIComponent(url.pathname));
+  const version = found?.[1];
+  if (
+    version &&
+    version !== SUPPORTED_GHIDRA_LINE &&
+    !version.startsWith(`${SUPPORTED_GHIDRA_LINE}.`)
+  ) {
+    throw new ReaBuildError(
+      400,
+      `This is Ghidra ${version}, but REA only supports Ghidra ${SUPPORTED_GHIDRA_LINE}.x (verified with 12.1.4). Use a 12.1.x release zip.`,
+    );
+  }
+}
+
 /** Checks the two values the image build needs before anything is downloaded. */
 export function cleanReaInput(input: { ghidraUrl?: unknown; ghidraSha256?: unknown }) {
   const url = typeof input.ghidraUrl === 'string' ? input.ghidraUrl.trim() : '';
@@ -50,6 +72,7 @@ export function cleanReaInput(input: { ghidraUrl?: unknown; ghidraSha256?: unkno
   if (!parsed || parsed.protocol !== 'https:' || url.length > 2048) {
     throw new ReaBuildError(400, 'The Ghidra URL must be an https:// link to the release zip');
   }
+  checkGhidraVersion(parsed);
   const sha = typeof input.ghidraSha256 === 'string' ? input.ghidraSha256.trim().toLowerCase() : '';
   if (!/^[0-9a-f]{64}$/.test(sha)) {
     throw new ReaBuildError(400, 'The SHA-256 must be 64 hexadecimal characters');
