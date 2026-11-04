@@ -299,16 +299,47 @@ export class GitHubService {
 
   async status(projectId: number) {
     const project = this.project(projectId);
-    if (!project.repo) return { repo: null, branch: null, changes: 0 };
+    if (!project.repo) return { repo: null, branch: null, changes: 0, ahead: null };
     if (this.otherHost(project)) {
-      return { repo: null, branch: null, changes: 0, linkedTo: project.repo_host ?? 'github' };
+      return {
+        repo: null,
+        branch: null,
+        changes: 0,
+        ahead: null,
+        linkedTo: project.repo_host ?? 'github',
+      };
     }
     return this.exclusive(projectId, async () => {
       const dir = await this.safeRepoDir(projectId);
       const branch = (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() || null;
       const changes = await this.changeCount(dir);
-      return { repo: project.repo, branch, changes };
+      const ahead = branch ? await this.commitsAhead(dir, project.repo!, branch) : null;
+      return { repo: project.repo, branch, changes, ahead };
     });
+  }
+
+  /**
+   * Commits on the branch that the remote does not have yet, asked of the remote itself: a push by
+   * URL does not move any local remote-tracking ref, and the agent commits without ever pushing, so
+   * the workspace cannot tell. null when the remote cannot be asked in time, or has commits the
+   * workspace lacks.
+   */
+  private async commitsAhead(dir: string, repo: string, branch: string): Promise<number | null> {
+    try {
+      const account = this.optionalAccount();
+      if (!account && this.kind === 'forgejo') return null; // no instance address without an account
+      const url = `${account?.webBase ?? this.webBase}/${repo}.git`;
+      const out = await this.git(dir, ['ls-remote', url, `refs/heads/${branch}`], {
+        account,
+        timeoutMs: 10_000,
+      });
+      const sha = out.trim().split(/\s/)[0];
+      // No such branch on the remote yet: every commit on this one is unpublished.
+      const range = sha ? [`${sha}..HEAD`] : ['HEAD'];
+      return Number((await this.git(dir, ['rev-list', '--count', ...range])).trim());
+    } catch {
+      return null;
+    }
   }
 
   async clone(projectId: number, repoInput: unknown, branchInput?: unknown) {

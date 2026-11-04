@@ -137,6 +137,9 @@ export function GitHubPanel({ projectId, forge = 'github' }: { projectId: number
             <Text size="sm">
               On <Code>{status.branch ?? 'no branch'}</Code> · {status.changes} uncommitted change
               {status.changes === 1 ? '' : 's'}
+              {status.ahead === null
+                ? ''
+                : ` · ${status.ahead} commit${status.ahead === 1 ? '' : 's'} to push`}
             </Text>
             {account.connected && (
               <form onSubmit={push}>

@@ -194,6 +194,8 @@ export interface RepoStatus {
   repo: string | null;
   branch: string | null;
   changes: number;
+  /** Commits on the branch the remote does not have yet; null when that could not be determined. */
+  ahead: number | null;
   /** Set when the project's repository lives on the other forge. */
   linkedTo?: Forge;
 }

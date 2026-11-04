@@ -186,7 +186,33 @@ describe('github', () => {
         repo: 'octo/hello',
         branch: 'main',
         changes: 1,
+        ahead: 0,
       });
+    });
+
+    it('counts commits made in the workspace that the remote does not have yet', async () => {
+      await connect();
+      await clone();
+      writeFileSync(join(t.ws, 'a.txt'), 'a');
+      git(t.ws, 'add', '-A');
+      git(t.ws, '-c', 'user.name=agent', '-c', 'user.email=a@b.c', 'commit', '-m', 'agent work');
+      // Committed but not pushed: no uncommitted changes, one commit to push.
+      expect((await t.call('GET', base())).json()).toMatchObject({ changes: 0, ahead: 1 });
+      expect((await t.call('POST', `${base()}/push`, { branch: 'main' })).statusCode).toBe(200);
+      expect((await t.call('GET', base())).json()).toMatchObject({ changes: 0, ahead: 0 });
+    });
+
+    it('counts every commit when the branch does not exist on the remote, and says unknown when the remote is unreachable', async () => {
+      await connect();
+      await clone();
+      git(t.ws, 'switch', '-c', 'topic');
+      writeFileSync(join(t.ws, 'b.txt'), 'b');
+      git(t.ws, 'add', '-A');
+      git(t.ws, '-c', 'user.name=agent', '-c', 'user.email=a@b.c', 'commit', '-m', 'b');
+      // The new branch has the clone's commit plus this one, none of them on the remote's topic.
+      expect((await t.call('GET', base())).json().ahead).toBe(2);
+      rmSync(t.bare, { recursive: true, force: true });
+      expect((await t.call('GET', base())).json().ahead).toBeNull();
     });
 
     it('works without a token (public repositories)', async () => {
