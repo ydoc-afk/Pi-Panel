@@ -257,6 +257,20 @@ export class FakePiProcess implements RunningProcess {
       const answer = this.uiAnswers.get(askId);
       message = `answer: ${answer ? JSON.stringify({ ...answer, id: undefined }) : 'none'}`;
     }
+    // "/push <json>" is what the push_to_repo tool does: ask the reserved dialog and wait for the outcome.
+    if (message.startsWith('/push ')) {
+      const askId = `ui-${++this.uiSeq}`;
+      this.send({
+        type: 'extension_ui_request',
+        id: askId,
+        method: 'input',
+        title: '@pi-panel/push',
+        placeholder: message.slice(6),
+      });
+      while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead) await tick();
+      const answer = this.uiAnswers.get(askId);
+      message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
+    }
     // "/fail <text>" ends the turn like a rejected model call: no text, stopReason "error".
     const failure = message.startsWith('/fail ') ? message.slice(6) : null;
     const reply = message === '/hang' || failure !== null ? '' : `You said: ${message}`;

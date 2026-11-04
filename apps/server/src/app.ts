@@ -10,6 +10,7 @@ import { registerDashboard } from './dashboard.js';
 import { openDefaultDb, schemaVersion } from './db.js';
 import { registerGuards } from './guards.js';
 import { DockerRuntime } from './docker-runtime.js';
+import type { ForgePusher } from './agent-push.js';
 import { GitHubService, registerGitHub, type GitHubOptions } from './github.js';
 import multipart from '@fastify/multipart';
 import { McpService, registerMcp, type McpOptions } from './mcp.js';
@@ -36,6 +37,8 @@ export interface AppOptions {
   github?: GitHubOptions;
   /** Overrides for the Forgejo service. */
   forgejo?: GitHubOptions;
+  /** Replaces the agent's push-to-repository backend (tests). */
+  agentPush?: ForgePusher;
   /** Overrides for package review (tests). */
   packages?: PackageOptions;
   /** Overrides for the package lab (tests). */
@@ -86,7 +89,33 @@ export function buildApp(opts: AppOptions = {}) {
   const limits = { ...DEFAULT_LIMITS, ...opts.samples };
   const samples = new SamplesService(db, dataDir, limits);
   const sidecars = new SidecarManager(db, mcpStore, runtime, dataDir, opts.sidecars);
-  const sessions = new SessionManager(db, runtime, providers, dataDir, mcpStore, sidecars, samples);
+  const pusher: ForgePusher = opts.agentPush ?? {
+    link(projectId) {
+      const p = db.prepare('SELECT repo, repo_host FROM projects WHERE id = ?').get(projectId) as
+        { repo: string | null; repo_host: string | null } | undefined;
+      if (!p?.repo) return null;
+      return { forge: p.repo_host === 'forgejo' ? 'Forgejo' : 'GitHub', repo: p.repo };
+    },
+    push(projectId, request) {
+      const p = db.prepare('SELECT repo_host FROM projects WHERE id = ?').get(projectId) as
+        { repo_host: string | null } | undefined;
+      return (p?.repo_host === 'forgejo' ? forgejo : github).push(
+        projectId,
+        request.branch,
+        request.message,
+      );
+    },
+  };
+  const sessions = new SessionManager(
+    db,
+    runtime,
+    providers,
+    dataDir,
+    mcpStore,
+    sidecars,
+    samples,
+    pusher,
+  );
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
   const rea = new ReaBuilder(runtime, { dataDir });

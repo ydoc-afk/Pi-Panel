@@ -1,8 +1,15 @@
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { agentNote } from './agent-note.js';
+import {
+  PUSH_DIALOG_TITLE,
+  describePush,
+  parsePushRequest,
+  type ForgePusher,
+  type PushRequest,
+} from './agent-push.js';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
 import type { McpStore } from './mcp-store.js';
 import type { SamplesService } from './samples.js';
@@ -39,6 +46,7 @@ export interface StreamMessage {
 /** High-volume events that are streamed live but not persisted; message_end carries the final text. */
 const EPHEMERAL = new Set(['message_update', 'tool_execution_update']);
 const REPLAY_LIMIT = 1000;
+const FORGE_EXTENSION = new URL('../assets/panel-forge.js', import.meta.url);
 /** Extension UI calls that block pi until the client answers. */
 const UI_DIALOGS = new Set(['select', 'confirm', 'input', 'editor']);
 /** Grace after a dialog's own timeout before the panel stops offering it. */
@@ -54,12 +62,20 @@ export const sessionDto = (r: SessionRow) => ({
   createdAt: r.created_at,
 });
 
+/** A dialog waiting for the user; push is set for the reserved push-to-repository confirmation. */
+interface PendingUi {
+  timer: ReturnType<typeof setTimeout> | null;
+  push?: PushRequest;
+  /** A push is running, so a second answer must not start another. */
+  busy?: boolean;
+}
+
 export class SessionManager {
   private live = new Map<number, RpcClient>();
   private starting = new Map<number, Promise<RpcClient>>();
   private intentionalStops = new Set<RpcClient>();
   /** Extension dialogs waiting for an answer, per session, with the timer that retires them. */
-  private readonly uiPending = new Map<number, Map<string, ReturnType<typeof setTimeout> | null>>();
+  private readonly uiPending = new Map<number, Map<string, PendingUi>>();
   /** What each status and widget currently shows, so repeats and clears of nothing are dropped. */
   private readonly uiShown = new Map<number, Map<string, string>>();
   private listeners = new Map<number, Set<(m: StreamMessage) => void>>();
@@ -75,6 +91,7 @@ export class SessionManager {
     private readonly mcp: McpStore,
     private readonly sidecars: SidecarManager,
     private readonly samples: SamplesService,
+    private readonly pusher?: ForgePusher,
   ) {
     // No pi process survives a panel restart, so nothing can still be running.
     db.prepare("UPDATE sessions SET status = 'idle' WHERE status = 'running'").run();
@@ -238,7 +255,7 @@ export class SessionManager {
 
   /** Drops dialog timers and shown-state without recording anything: the session is going away. */
   private forgetUi(id: number) {
-    for (const timer of this.uiPending.get(id)?.values() ?? []) if (timer) clearTimeout(timer);
+    for (const { timer } of this.uiPending.get(id)?.values() ?? []) if (timer) clearTimeout(timer);
     this.uiPending.delete(id);
     this.uiShown.delete(id);
   }
@@ -354,12 +371,17 @@ export class SessionManager {
       .prepare('SELECT repo, repo_host FROM projects WHERE id = ?')
       .get(projectId) as { repo: string | null; repo_host: string | null } | undefined;
     const note = agentNote(link?.repo ?? null, link?.repo_host ?? null);
+    const extension = join(dir, 'extensions', 'panel-forge.js');
     if (note) {
       const tmp = join(dir, 'AGENTS.md.tmp');
       await writeFile(tmp, note, { mode: 0o644 });
       await rename(tmp, join(dir, 'AGENTS.md'));
+      // The push tool the note refers to: installed only where there is a repository to push to.
+      await mkdir(join(dir, 'extensions'), { recursive: true });
+      await writeFile(extension, await readFile(FORGE_EXTENSION), { mode: 0o644 });
     } else {
       await rm(join(dir, 'AGENTS.md'), { force: true });
+      await rm(extension, { force: true });
     }
     return mcp;
   }
@@ -443,17 +465,22 @@ export class SessionManager {
       else shown.set(key, value);
       return true;
     }
+    let push: PushRequest | undefined;
+    if (method === 'input' && event.title === PUSH_DIALOG_TITLE && typeof event.id === 'string') {
+      push = this.acceptPush(id, event);
+      if (!push) return false; // answered (refused) without bothering the user
+    }
     if (UI_DIALOGS.has(method) && typeof event.id === 'string') {
       let pending = this.uiPending.get(id);
       if (!pending) this.uiPending.set(id, (pending = new Map()));
       const requestId = event.id;
       const ms = typeof event.timeout === 'number' && event.timeout > 0 ? event.timeout : 0;
-      pending.set(
-        requestId,
-        ms
+      pending.set(requestId, {
+        timer: ms
           ? setTimeout(() => this.retireUi(id, requestId, 'timeout'), ms + UI_TIMEOUT_GRACE_MS)
           : null,
-      );
+        ...(push ? { push } : {}),
+      });
     }
     return true;
   }
@@ -461,7 +488,7 @@ export class SessionManager {
   private retireUi(id: number, requestId: string, reason: 'answered' | 'timeout' | 'closed') {
     const pending = this.uiPending.get(id);
     if (!pending?.has(requestId)) return false;
-    const timer = pending.get(requestId);
+    const timer = pending.get(requestId)?.timer;
     if (timer) clearTimeout(timer);
     pending.delete(requestId);
     if (pending.size === 0) this.uiPending.delete(id);
@@ -469,8 +496,56 @@ export class SessionManager {
     return true;
   }
 
+  /**
+   * An agent's push_to_repo tool asked for a push. Turn its dialog into a confirmation written by the
+   * panel (the agent's own words never reach the user as the question), or answer it right away when
+   * there is nothing to confirm: no linked repository, or a malformed request.
+   */
+  private acceptPush(id: number, event: PiEvent): PushRequest | undefined {
+    const refuse = (error: string) => {
+      try {
+        this.live.get(id)?.send({
+          type: 'extension_ui_response',
+          id: event.id,
+          value: JSON.stringify({ ok: false, error }),
+        });
+      } catch {
+        // pi is gone; nothing is waiting.
+      }
+      return undefined;
+    };
+    const request = parsePushRequest(event.placeholder);
+    if (!request) return refuse('The push request was malformed.');
+    const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as
+      { project_id: number } | undefined;
+    const link = row ? this.pusher?.link(row.project_id) : null;
+    if (!link) return refuse('This project is not linked to a GitHub or Forgejo repository.');
+    // What the user sees: the panel's wording, shown as a plain yes/no question.
+    event.method = 'confirm';
+    event.title = `Push to ${link.forge}?`;
+    event.message = describePush(link.forge, link.repo, request);
+    delete event.placeholder;
+    return request;
+  }
+
+  /** Runs an approved push from the host and reports the outcome as the agent will read it. */
+  private async runPush(sessionId: number, request: PushRequest): Promise<string> {
+    const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(sessionId) as
+      { project_id: number } | undefined;
+    if (!row || !this.pusher)
+      return JSON.stringify({ ok: false, error: 'Pushing is unavailable.' });
+    try {
+      return JSON.stringify({ ok: true, ...(await this.pusher.push(row.project_id, request)) });
+    } catch (err) {
+      return JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Push failed',
+      });
+    }
+  }
+
   /** Delivers the user's answer to an extension dialog. */
-  respondUi(
+  async respondUi(
     id: number,
     body: { id?: unknown; value?: unknown; confirmed?: unknown; cancelled?: unknown },
   ) {
@@ -490,12 +565,26 @@ export class SessionManager {
     else if (body.cancelled === true) answer = { cancelled: true };
     else throw new SessionError(400, 'value must be a string, confirmed a boolean, cancelled true');
     const client = this.live.get(id);
-    if (!client || !this.uiPending.get(id)?.has(requestId)) {
+    const entry = this.uiPending.get(id)?.get(requestId);
+    if (!client || !entry || entry.busy) {
       throw new SessionError(409, 'That question is no longer waiting for an answer');
+    }
+    if (entry.push) {
+      // Only yes or no is meaningful here; the outcome of an approved push goes back to the agent.
+      if (typeof body.confirmed !== 'boolean' && body.cancelled !== true) {
+        throw new SessionError(400, 'Answer with confirmed or cancelled');
+      }
+      if (body.confirmed === true) {
+        entry.busy = true;
+        answer = { value: await this.runPush(id, entry.push) };
+      } else {
+        answer = { cancelled: true };
+      }
     }
     try {
       client.send({ type: 'extension_ui_response', id: requestId, ...answer });
     } catch {
+      this.retireUi(id, requestId, 'closed');
       throw new SessionError(502, 'pi is not running');
     }
     this.retireUi(id, requestId, 'answered');
@@ -635,8 +724,8 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
   );
 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/ui-response', (req, reply) =>
-    handle(reply, () => {
-      manager.respondUi(num(req.params.id), (req.body ?? {}) as Record<string, unknown>);
+    handle(reply, async () => {
+      await manager.respondUi(num(req.params.id), (req.body ?? {}) as Record<string, unknown>);
       return { ok: true };
     }),
   );
