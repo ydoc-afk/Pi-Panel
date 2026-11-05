@@ -21,7 +21,7 @@ async function setup(fetchImpl: typeof fetch = vi.fn() as unknown as typeof fetc
   const c = res.cookies.find((x) => x.name === 'pp_session')!;
   const headers = { cookie: `pp_session=${c.value}` };
   const call = (
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
     url: string,
     payload?: Record<string, unknown>,
   ) => app.inject({ method, url, headers, payload });
@@ -300,6 +300,85 @@ describe('providers', () => {
       await prompt(session.id);
       expect(t.runtime.execs[0]!.env).toEqual({ PI_CODING_AGENT_DIR: '/home/sandbox/.pi/agent' });
       expect(t.runtime.processes[0]!.received.some((c) => c.type === 'set_model')).toBe(false);
+    });
+
+    describe('project default model', () => {
+      const setDefault = (projectId: number, defaultModel: unknown) =>
+        t.call('PATCH', `/api/projects/${projectId}`, { defaultModel });
+
+      it('is off by default and shown on the project', async () => {
+        const { project } = await startSession();
+        expect(project.defaultModel).toBeNull();
+      });
+
+      it('is used by every session that did not choose a model, including existing ones', async () => {
+        const p = (await compat()).json().provider;
+        const { project, session: before } = await startSession();
+        const res = await setDefault(project.id, { providerId: p.id, modelId: 'qwen2.5-coder:7b' });
+        expect(res.statusCode).toBe(200);
+        expect(res.json().project.defaultModel).toEqual({
+          providerId: p.id,
+          modelId: 'qwen2.5-coder:7b',
+        });
+
+        // A session that existed before the default was set, and one created after: both use it.
+        const after = (await t.call('POST', `/api/projects/${project.id}/sessions`, {})).json()
+          .session;
+        for (const [i, s] of [before, after].entries()) {
+          expect((await prompt(s.id)).statusCode).toBe(200);
+          expect(
+            t.runtime.processes[i]!.received.find((c) => c.type === 'set_model'),
+          ).toMatchObject({ provider: 'pp-local-llama', modelId: 'qwen2.5-coder:7b' });
+        }
+        expect(t.runtime.execs[0]!.env).toMatchObject({ [`PP_KEY_${p.id}`]: SECRET });
+      });
+
+      it('loses to a model the session chose itself', async () => {
+        const p = (await compat()).json().provider;
+        const other = (await compat({ name: 'Other', models: ['other-model'] })).json().provider;
+        const { project } = await startSession();
+        await setDefault(project.id, { providerId: p.id, modelId: 'qwen2.5-coder:7b' });
+        const own = (
+          await t.call('POST', `/api/projects/${project.id}/sessions`, {
+            providerId: other.id,
+            modelId: 'other-model',
+          })
+        ).json().session;
+        await prompt(own.id);
+        expect(t.runtime.processes[0]!.received.find((c) => c.type === 'set_model')).toMatchObject({
+          modelId: 'other-model',
+        });
+      });
+
+      it('can be cleared, and is cleared when its provider is deleted', async () => {
+        const p = (await compat()).json().provider;
+        const { project, session } = await startSession();
+        await setDefault(project.id, { providerId: p.id, modelId: 'qwen2.5-coder:7b' });
+        expect((await setDefault(project.id, null)).json().project.defaultModel).toBeNull();
+        await prompt(session.id);
+        expect(t.runtime.processes[0]!.received.some((c) => c.type === 'set_model')).toBe(false);
+
+        await setDefault(project.id, { providerId: p.id, modelId: 'qwen2.5-coder:7b' });
+        await t.call('DELETE', `/api/providers/${p.id}`);
+        const got = (await t.call('GET', `/api/projects/${project.id}`)).json().project;
+        expect(got.defaultModel).toBeNull();
+      });
+
+      it('rejects a bad or unknown model', async () => {
+        const { project } = await startSession();
+        expect((await setDefault(project.id, { providerId: 'x', modelId: 'm' })).statusCode).toBe(
+          400,
+        );
+        expect((await setDefault(project.id, { providerId: 1, modelId: '  ' })).statusCode).toBe(
+          400,
+        );
+        expect((await setDefault(project.id, { providerId: 999, modelId: 'm' })).statusCode).toBe(
+          404,
+        );
+        expect((await setDefault(project.id, 'nope')).statusCode).toBe(400);
+        const none = await t.call('PATCH', `/api/projects/${project.id}`, {});
+        expect(none.statusCode).toBe(400);
+      });
     });
 
     it('fails the prompt clearly when pi rejects the model', async () => {

@@ -13,6 +13,8 @@ interface ProjectRow {
   repo: string | null;
   runtime: string;
   applied_runtime: string;
+  default_provider_id: number | null;
+  default_model_id: string | null;
   created_at: number;
 }
 
@@ -26,6 +28,11 @@ const toDto = (r: ProjectRow) => ({
   runtime: r.runtime,
   // The container was made from a different runtime image; Recreate applies the change.
   runtimePending: r.container_id !== null && r.runtime !== r.applied_runtime,
+  // Every session of the project runs this unless it chose its own model; null is pi's default.
+  defaultModel:
+    r.default_provider_id && r.default_model_id
+      ? { providerId: r.default_provider_id, modelId: r.default_model_id }
+      : null,
   createdAt: r.created_at,
 });
 
@@ -98,20 +105,54 @@ export function registerProjects(
     return containerId;
   }
 
-  // Chooses the runtime image for the next container. The running container is not touched.
+  // Changes project settings. Each field is optional: runtime (applies on the next container) and
+  // defaultModel ({providerId, modelId}, or null for pi's own default).
   app.patch<{ Params: { id: string } }>('/api/projects/:id', async (req, reply) => {
     const id = Number(req.params.id);
     const row = find(id);
     if (!row) return reply.code(404).send({ error: 'Project not found' });
-    const { runtime: chosen } = (req.body ?? {}) as { runtime?: unknown };
-    const variant = findRuntime(chosen);
-    if (!variant) return reply.code(400).send({ error: 'Unknown runtime' });
-    if (!(await runtime.imageInfo(imageFor(runtime, variant.id)))) {
-      return reply.code(409).send({
-        error: `The ${variant.label} runtime has not been built yet. Build it from the Runtimes card first.`,
-      });
+    const body = (req.body ?? {}) as { runtime?: unknown; defaultModel?: unknown };
+    if (body.runtime === undefined && body.defaultModel === undefined) {
+      return reply.code(400).send({ error: 'Nothing to change' });
     }
-    db.prepare('UPDATE projects SET runtime = ? WHERE id = ?').run(variant.id, id);
+    if (body.runtime !== undefined) {
+      const variant = findRuntime(body.runtime);
+      if (!variant) return reply.code(400).send({ error: 'Unknown runtime' });
+      if (!(await runtime.imageInfo(imageFor(runtime, variant.id)))) {
+        return reply.code(409).send({
+          error: `The ${variant.label} runtime has not been built yet. Build it from the Runtime tab first.`,
+        });
+      }
+      db.prepare('UPDATE projects SET runtime = ? WHERE id = ?').run(variant.id, id);
+    }
+    if (body.defaultModel !== undefined) {
+      if (body.defaultModel === null) {
+        db.prepare(
+          'UPDATE projects SET default_provider_id = NULL, default_model_id = NULL WHERE id = ?',
+        ).run(id);
+      } else {
+        const { providerId, modelId } = (body.defaultModel ?? {}) as {
+          providerId?: unknown;
+          modelId?: unknown;
+        };
+        if (
+          !Number.isInteger(providerId) ||
+          typeof modelId !== 'string' ||
+          !modelId.trim() ||
+          modelId.length > 200
+        ) {
+          return reply
+            .code(400)
+            .send({ error: 'defaultModel needs an integer providerId and a modelId' });
+        }
+        if (!db.prepare('SELECT 1 FROM providers WHERE id = ?').get(providerId as number)) {
+          return reply.code(404).send({ error: 'Provider not found' });
+        }
+        db.prepare(
+          'UPDATE projects SET default_provider_id = ?, default_model_id = ? WHERE id = ?',
+        ).run(providerId as number, modelId.trim(), id);
+      }
+    }
     return { project: toDto(find(id)!) };
   });
 

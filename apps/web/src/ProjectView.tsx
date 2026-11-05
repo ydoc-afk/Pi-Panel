@@ -39,6 +39,7 @@ import {
   recreateProject,
   renameSession,
   restartProject,
+  setProjectDefaultModel,
   type Project,
   type Provider,
   type Session,
@@ -53,6 +54,10 @@ import { navigate } from './router.js';
 import { SessionView } from './SessionView.js';
 import { EmptyState, ErrorText, FlatSection, StatusBadge, Tip } from './ui.js';
 import { askConfirm } from './ConfirmDialog.js';
+
+/** The model select's value for a project's default model ("providerId:modelId"), or ''. */
+const modelValue = (p: Project) =>
+  p.defaultModel ? `${p.defaultModel.providerId}:${p.defaultModel.modelId}` : '';
 
 /** How often the session list refreshes, so running/idle badges stay current. */
 const POLL_MS = 3000;
@@ -154,7 +159,10 @@ export function ProjectView({
   useEffect(() => {
     setProject(null);
     getProject(projectId)
-      .then(setProject)
+      .then((p) => {
+        setProject(p);
+        setChoice(modelValue(p));
+      })
       .catch((e: Error) => setError(e.message));
     void refresh();
     listProviders()
@@ -188,12 +196,30 @@ export function ProjectView({
     }
   }
 
+  async function saveDefault(value: string) {
+    setError('');
+    try {
+      const [providerId, ...rest] = value.split(':');
+      setProject(
+        await setProjectDefaultModel(
+          projectId,
+          value ? { providerId: Number(providerId), modelId: rest.join(':') } : null,
+        ),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not change the default model');
+    }
+  }
+
   async function add() {
     try {
       const [providerId, ...rest] = choice.split(':');
       const s = await createSession(
         projectId,
-        choice ? { providerId: Number(providerId), modelId: rest.join(':') } : undefined,
+        // The project default is not stored on the session, so changing the default later applies to it.
+        choice && choice !== modelValue(project!)
+          ? { providerId: Number(providerId), modelId: rest.join(':') }
+          : undefined,
       );
       await refresh();
       select(s.id);
@@ -334,13 +360,45 @@ export function ProjectView({
                   <Stack gap="xs">
                     <Select
                       aria-label="Model"
-                      placeholder="No model (pi default)"
+                      placeholder={
+                        project.defaultModel ? 'Project default' : 'No model (pi default)'
+                      }
                       size="sm"
                       clearable
                       value={choice || null}
                       data={modelOptions}
                       onChange={(v) => setChoice(v ?? '')}
                     />
+                    {choice && choice !== modelValue(project) && (
+                      <Anchor
+                        component="button"
+                        type="button"
+                        size="xs"
+                        ta="left"
+                        onClick={() => void saveDefault(choice)}
+                      >
+                        Use for every session in this project
+                      </Anchor>
+                    )}
+                    {project.defaultModel && (
+                      <Text size="xs" c="dimmed">
+                        Project default:{' '}
+                        {providers.find((p) => p.id === project.defaultModel!.providerId)?.name ??
+                          'provider'}{' '}
+                        / {project.defaultModel.modelId}.{' '}
+                        <Anchor
+                          component="button"
+                          type="button"
+                          size="xs"
+                          onClick={() => {
+                            setChoice('');
+                            void saveDefault('');
+                          }}
+                        >
+                          Clear
+                        </Anchor>
+                      </Text>
+                    )}
                     <Tip
                       label={
                         running

@@ -198,6 +198,18 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
         SELECT id, COALESCE(repo_host, 'github'), repo, '', 1, created_at FROM projects WHERE repo IS NOT NULL`);
     },
   },
+  {
+    // The model every session of a project uses unless it chose its own. NULL keeps pi's default.
+    // Deleting the provider clears the provider, which turns the default off (the model id alone
+    // means nothing).
+    version: 8,
+    name: 'default model per project',
+    up: (db) =>
+      addMissingColumns(db, 'projects', {
+        default_provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
+        default_model_id: 'TEXT',
+      }),
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {
