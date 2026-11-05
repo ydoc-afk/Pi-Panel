@@ -381,6 +381,25 @@ export const removePackage = (projectId: number, source: string) =>
 
 export type LabKind = 'extension' | 'skill' | 'prompt' | 'theme';
 
+export interface PackageSetStatus {
+  id: number;
+  name: string;
+  sources: { source: string; name: string; version: string }[];
+  createdAt: number;
+  installed: string[];
+  missing: string[];
+  different: { source: string; installed: string }[];
+}
+export const listPackageSets = async (projectId: number) =>
+  (await request<{ sets: PackageSetStatus[] }>(`/api/projects/${projectId}/package-sets`)).sets;
+export const savePackageSet = (name: string, fromProjectId: number) =>
+  request<{ set: PackageSetStatus; skipped: number }>(
+    '/api/package-sets',
+    send('POST', { name, fromProjectId }),
+  );
+export const deletePackageSet = (id: number) =>
+  request<void>(`/api/package-sets/${id}`, { method: 'DELETE' });
+
 export interface LabPackage {
   path: string;
   name: string | null;
