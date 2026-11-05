@@ -22,10 +22,14 @@ token. Mitigations, all covered by tests in `apps/server/src/github.test.ts`:
 - **Privilege drop:** when the panel runs as root, git runs as uid 1000 (the sandbox user), so a
   hostile repository cannot read `secret.key` or other panel files.
 - **Per-project lock:** git operations on one project never interleave.
+- **Folders:** a repository in a subfolder is checked the same way, and the folder itself must be a
+  real directory the panel created, not a symlink.
 
 ## Behaviour
 
-- Cloning requires an empty workspace and works without a token for public repositories.
+- Cloning works without a token for public repositories. A project's first repository added through
+  the legacy `/github/clone` route needs an empty workspace; the Repository tab clones every
+  repository into its own folder (see [Repositories](repositories.md)).
 - "Commit & push" runs `git switch -C <branch>`, `git add -A`, commits if there are changes, then
   pushes `refs/heads/<branch>` (never forced). Commits are authored as the connected user using
   their GitHub noreply address.
