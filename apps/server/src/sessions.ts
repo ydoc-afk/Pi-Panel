@@ -41,6 +41,9 @@ interface SessionRow {
   pi_session_file: string | null;
   provider_id: number | null;
   model_id: string | null;
+  thinking_level: string | null;
+  auto_compaction: number | null;
+  kind: string;
   created_at: number;
 }
 
@@ -65,8 +68,30 @@ export const sessionDto = (r: SessionRow) => ({
   status: r.status,
   providerId: r.provider_id,
   modelId: r.model_id,
+  kind: r.kind,
   createdAt: r.created_at,
 });
+
+/** The thinking levels pi knows. Which ones a model offers is up to pi (get_available_thinking_levels). */
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+
+/** What the session header shows about pi: thinking, compaction and token use. */
+export interface PiState {
+  /** pi is running for this session; the stats below need that. */
+  running: boolean;
+  thinkingLevel: string | null;
+  availableThinkingLevels: string[];
+  autoCompaction: boolean | null;
+  isCompacting: boolean;
+  model: { id: string; provider: string | null; contextWindow: number | null } | null;
+  stats: {
+    tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+    cost: number;
+    toolCalls: number;
+    messages: number;
+    context: { tokens: number | null; window: number | null; percent: number | null } | null;
+  } | null;
+}
 
 /** What an approved reserved confirmation does on the host. */
 type ForgeAction =
@@ -117,7 +142,7 @@ export class SessionManager {
   listForProject(projectId: number) {
     return (
       this.db
-        .prepare('SELECT * FROM sessions WHERE project_id = ? ORDER BY id')
+        .prepare("SELECT * FROM sessions WHERE project_id = ? AND kind = 'chat' ORDER BY id")
         .all(projectId) as unknown as SessionRow[]
     ).map(sessionDto);
   }
@@ -359,6 +384,18 @@ export class SessionManager {
         this.stopClient(id, client);
         throw new SessionError(400, `Model not available: ${res.error ?? 'unknown error'}`);
       }
+    }
+    // Controls the user changed earlier. A refusal (a level this model lacks) is not fatal: pi keeps
+    // its own value and the header shows what it is really using.
+    if (row.thinking_level) {
+      await client
+        .request({ type: 'set_thinking_level', level: row.thinking_level })
+        .catch(() => null);
+    }
+    if (row.auto_compaction !== null) {
+      await client
+        .request({ type: 'set_auto_compaction', enabled: row.auto_compaction !== 0 })
+        .catch(() => null);
     }
     return client;
   }
@@ -619,6 +656,136 @@ export class SessionManager {
   }
 
   /** Delivers the user's answer to an extension dialog. */
+  /** Thinking level, compaction and token use. Never starts pi: a stopped session reports what it will use. */
+  async piState(id: number): Promise<PiState> {
+    const row = this.row(id);
+    const client = this.live.get(id);
+    const state: PiState = {
+      running: !!client,
+      thinkingLevel: row.thinking_level,
+      availableThinkingLevels: [],
+      autoCompaction: row.auto_compaction === null ? null : row.auto_compaction !== 0,
+      isCompacting: false,
+      model: null,
+      stats: null,
+    };
+    if (!client) return state;
+    const ask = (type: string) =>
+      client
+        .request({ type })
+        .then((r) => (r.success ? ((r.data ?? {}) as Record<string, unknown>) : null))
+        .catch(() => null);
+    const [st, levels, stats] = await Promise.all([
+      ask('get_state'),
+      ask('get_available_thinking_levels'),
+      ask('get_session_stats'),
+    ]);
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    if (st) {
+      if (typeof st.thinkingLevel === 'string') state.thinkingLevel = st.thinkingLevel;
+      if (typeof st.autoCompactionEnabled === 'boolean')
+        state.autoCompaction = st.autoCompactionEnabled;
+      state.isCompacting = st.isCompacting === true;
+      const m = st.model as
+        { id?: unknown; provider?: unknown; contextWindow?: unknown } | undefined;
+      if (m && typeof m.id === 'string') {
+        state.model = {
+          id: m.id,
+          provider: typeof m.provider === 'string' ? m.provider : null,
+          contextWindow: num(m.contextWindow),
+        };
+      }
+    }
+    if (Array.isArray(levels?.levels)) {
+      state.availableThinkingLevels = (levels.levels as unknown[]).filter(
+        (l): l is string => typeof l === 'string',
+      );
+    }
+    if (stats) {
+      const t = (stats.tokens ?? {}) as Record<string, unknown>;
+      const c = stats.contextUsage as Record<string, unknown> | null | undefined;
+      state.stats = {
+        tokens: {
+          input: num(t.input) ?? 0,
+          output: num(t.output) ?? 0,
+          cacheRead: num(t.cacheRead) ?? 0,
+          cacheWrite: num(t.cacheWrite) ?? 0,
+          total: num(t.total) ?? 0,
+        },
+        cost: num(stats.cost) ?? 0,
+        toolCalls: num(stats.toolCalls) ?? 0,
+        messages: num(stats.totalMessages) ?? 0,
+        context: c
+          ? { tokens: num(c.tokens), window: num(c.contextWindow), percent: num(c.percent) }
+          : null,
+      };
+    }
+    return state;
+  }
+
+  /** Sets the thinking level now if pi is running, and remembers it for when pi starts again. */
+  async setThinkingLevel(id: number, level: unknown) {
+    this.row(id);
+    if (typeof level !== 'string' || !THINKING_LEVELS.includes(level)) {
+      throw new SessionError(400, `level must be one of ${THINKING_LEVELS.join(', ')}`);
+    }
+    const client = this.live.get(id);
+    if (client) {
+      const res = await client
+        .request({ type: 'set_thinking_level', level })
+        .catch((err: Error) => ({ success: false, error: err.message }));
+      if (!res.success) throw new SessionError(400, res.error ?? 'pi rejected the thinking level');
+    }
+    this.db.prepare('UPDATE sessions SET thinking_level = ? WHERE id = ?').run(level, id);
+    return this.piState(id);
+  }
+
+  async setAutoCompaction(id: number, enabled: unknown) {
+    this.row(id);
+    if (typeof enabled !== 'boolean') throw new SessionError(400, 'enabled must be true or false');
+    const client = this.live.get(id);
+    if (client) {
+      const res = await client
+        .request({ type: 'set_auto_compaction', enabled })
+        .catch((err: Error) => ({ success: false, error: err.message }));
+      if (!res.success) throw new SessionError(400, res.error ?? 'pi rejected the setting');
+    }
+    this.db
+      .prepare('UPDATE sessions SET auto_compaction = ? WHERE id = ?')
+      .run(enabled ? 1 : 0, id);
+    return this.piState(id);
+  }
+
+  /** Summarises older context now. Needs pi running; the summary is a model call, so it can take a while. */
+  async compact(id: number, instructions?: unknown) {
+    this.row(id);
+    if (
+      instructions !== undefined &&
+      (typeof instructions !== 'string' || instructions.length > 2000)
+    ) {
+      throw new SessionError(400, 'instructions must be a string up to 2000 characters');
+    }
+    const client = this.live.get(id);
+    if (!client)
+      throw new SessionError(409, 'Start the session (send a prompt) before compacting it');
+    let res;
+    try {
+      res = await client.request(
+        { type: 'compact', ...(instructions ? { customInstructions: instructions } : {}) },
+        10 * 60_000,
+      );
+    } catch (err) {
+      throw new SessionError(502, err instanceof Error ? err.message : 'pi request failed');
+    }
+    if (!res.success) throw new SessionError(409, res.error ?? 'Compaction failed');
+    const d = (res.data ?? {}) as Record<string, unknown>;
+    return {
+      summary: typeof d.summary === 'string' ? d.summary.slice(0, 20_000) : '',
+      tokensBefore: typeof d.tokensBefore === 'number' ? d.tokensBefore : null,
+      tokensAfter: typeof d.estimatedTokensAfter === 'number' ? d.estimatedTokensAfter : null,
+    };
+  }
+
   async respondUi(
     id: number,
     body: { id?: unknown; value?: unknown; confirmed?: unknown; cancelled?: unknown },
@@ -788,6 +955,32 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
       }
       return await manager.prompt(num(req.params.id), message, streamingBehavior);
     }),
+  );
+
+  // Thinking level, compaction and token use (see PiState).
+  app.get<{ Params: { id: string } }>('/api/sessions/:id/pi', (req, reply) =>
+    handle(reply, () => manager.piState(num(req.params.id))),
+  );
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/thinking', (req, reply) =>
+    handle(reply, () =>
+      manager.setThinkingLevel(num(req.params.id), ((req.body ?? {}) as { level?: unknown }).level),
+    ),
+  );
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/auto-compaction', (req, reply) =>
+    handle(reply, () =>
+      manager.setAutoCompaction(
+        num(req.params.id),
+        ((req.body ?? {}) as { enabled?: unknown }).enabled,
+      ),
+    ),
+  );
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/compact', (req, reply) =>
+    handle(reply, () =>
+      manager.compact(
+        num(req.params.id),
+        ((req.body ?? {}) as { instructions?: unknown }).instructions,
+      ),
+    ),
   );
 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/abort', (req, reply) =>
