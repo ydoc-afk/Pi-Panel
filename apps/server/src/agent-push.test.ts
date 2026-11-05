@@ -3,7 +3,13 @@ import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { describePush, parsePushRequest, type ForgePusher } from './agent-push.js';
+import {
+  describePullRequest,
+  describePush,
+  parsePullRequestRequest,
+  parsePushRequest,
+  type ForgePusher,
+} from './agent-push.js';
 import { buildApp } from './app.js';
 import { openDb } from './db.js';
 import { agentDir } from './paths.js';
@@ -44,6 +50,43 @@ describe('parsePushRequest', () => {
   });
 });
 
+describe('parsePullRequestRequest', () => {
+  it('accepts a head and title with optional body and base', () => {
+    expect(parsePullRequestRequest('{"head":"topic","title":"Add x"}')).toEqual({
+      head: 'topic',
+      title: 'Add x',
+    });
+    expect(parsePullRequestRequest('{"head":"t","title":"T","body":"b","base":"main"}')).toEqual({
+      head: 't',
+      title: 'T',
+      body: 'b',
+      base: 'main',
+    });
+  });
+
+  it('rejects anything else', () => {
+    for (const bad of [
+      undefined,
+      'nope',
+      '{}',
+      '{"head":"t"}',
+      '{"head":"","title":"T"}',
+      '{"head":"t","title":"  "}',
+      `{"head":"t","title":"${'a'.repeat(257)}"}`,
+      '{"head":"t","title":"T","body":3}',
+      '{"head":"t","title":"T","base":3}',
+    ]) {
+      expect(parsePullRequestRequest(bad)).toBeNull();
+    }
+  });
+
+  it('describes the pull request in the panel’s own words', () => {
+    expect(describePullRequest('Forgejo', 'o/r', { head: 't', title: 'Add\nx' })).toBe(
+      'The agent asks to open a pull request on Forgejo repository o/r: "Add x", from branch "t" into the default branch.',
+    );
+  });
+});
+
 interface Ev {
   type?: string;
   method?: string;
@@ -62,9 +105,11 @@ describe('push_to_repo through the session dialog', () => {
   let sessionId: number;
   let linked: { forge: 'GitHub' | 'Forgejo'; repo: string } | null;
   const pushImpl = vi.fn();
+  const prImpl = vi.fn();
   const pusher: ForgePusher = {
     link: () => linked,
     push: (id, request) => pushImpl(id, request),
+    pullRequest: (id, request) => prImpl(id, request),
   };
   const call = (method: 'GET' | 'POST', url: string, payload?: Record<string, unknown>) =>
     app.inject({ method, url, headers, payload });
@@ -100,6 +145,7 @@ describe('push_to_repo through the session dialog', () => {
 
   beforeEach(async () => {
     pushImpl.mockReset();
+    prImpl.mockReset();
     linked = { forge: 'Forgejo', repo: 'codyw/Rufus_Decomp' };
     dataDir = mkdtempSync(join(tmpdir(), 'pp-push-'));
     db = openDb(':memory:');
@@ -203,6 +249,131 @@ describe('push_to_repo through the session dialog', () => {
   });
 });
 
+describe('open_pull_request through the session dialog', () => {
+  // Reuses the push suite's setup by repeating it; kept separate so each suite reads on its own.
+  let dataDir: string;
+  let app: ReturnType<typeof buildApp>;
+  let headers: { cookie: string };
+  let projectId: number;
+  let sessionId: number;
+  let linked: { forge: 'GitHub' | 'Forgejo'; repo: string } | null;
+  const prImpl = vi.fn();
+  const call = (method: 'GET' | 'POST', url: string, payload?: Record<string, unknown>) =>
+    app.inject({ method, url, headers, payload });
+  const events = async () =>
+    ((await call('GET', `/api/sessions/${sessionId}/events`)).json().events as { event: Ev }[]).map(
+      (m) => m.event,
+    );
+  const until = async (cond: () => Promise<boolean>) => {
+    const end = Date.now() + 3000;
+    while (Date.now() < end) {
+      if (await cond()) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('condition not met in time');
+  };
+  const dialog = async () => (await events()).find((e) => e.method === 'confirm');
+  const reply = async () => {
+    await until(async () => (await events()).some((e) => e.type === 'agent_settled'));
+    return JSON.stringify(
+      (await events()).find(
+        (e) =>
+          e.type === 'message_end' &&
+          (e.message as { role?: string } | undefined)?.role === 'assistant',
+      ),
+    );
+  };
+  const ask = (request: string) =>
+    call('POST', `/api/sessions/${sessionId}/prompt`, { message: `/pr ${request}` });
+
+  beforeEach(async () => {
+    prImpl.mockReset();
+    linked = { forge: 'Forgejo', repo: 'codyw/totk-pc-recomp' };
+    dataDir = mkdtempSync(join(tmpdir(), 'pp-pr-'));
+    app = buildApp({
+      db: openDb(':memory:'),
+      runtime: new FakeRuntime(),
+      dataDir,
+      agentPush: {
+        link: () => linked,
+        push: () => Promise.reject(new Error('unused')),
+        pullRequest: (id, request) => prImpl(id, request),
+      },
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/setup',
+      payload: { username: 'admin', password: 'correct-horse-battery' },
+    });
+    headers = { cookie: `pp_session=${res.cookies.find((c) => c.name === 'pp_session')!.value}` };
+    projectId = (await call('POST', '/api/projects', { name: 'p' })).json().project.id;
+    sessionId = (await call('POST', `/api/projects/${projectId}/sessions`, {})).json().session.id;
+  });
+  afterEach(async () => {
+    await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it('asks in the panel’s words and opens the pull request only after approval', async () => {
+    prImpl.mockResolvedValue({
+      url: 'http://forge/o/r/pulls/7',
+      number: 7,
+      base: 'main',
+      head: 'task/x',
+    });
+    await ask('{"head":"task/x","title":"Remember installer paths","body":"## What"}');
+    await until(async () => !!(await dialog()));
+    const d = (await dialog())!;
+    expect(d.title).toBe('Open a pull request on Forgejo?');
+    expect(d.message).toContain('"Remember installer paths", from branch "task/x"');
+    expect(d.placeholder).toBeUndefined();
+    expect(prImpl).not.toHaveBeenCalled();
+
+    await call('POST', `/api/sessions/${sessionId}/ui-response`, { id: d.id, confirmed: true });
+    expect(prImpl).toHaveBeenCalledWith(projectId, {
+      head: 'task/x',
+      title: 'Remember installer paths',
+      body: '## What',
+    });
+    expect(await reply()).toContain('http://forge/o/r/pulls/7');
+  });
+
+  it('does nothing when the user declines', async () => {
+    await ask('{"head":"t","title":"T"}');
+    await until(async () => !!(await dialog()));
+    await call('POST', `/api/sessions/${sessionId}/ui-response`, {
+      id: (await dialog())!.id,
+      confirmed: false,
+    });
+    expect(await reply()).toContain('result: cancelled');
+    expect(prImpl).not.toHaveBeenCalled();
+  });
+
+  it('reports a failure to the agent, and refuses unlinked projects and bad requests at once', async () => {
+    prImpl.mockRejectedValue(new Error('Forgejo rejected the request (401)'));
+    await ask('{"head":"t","title":"T"}');
+    await until(async () => !!(await dialog()));
+    await call('POST', `/api/sessions/${sessionId}/ui-response`, {
+      id: (await dialog())!.id,
+      confirmed: true,
+    });
+    expect(await reply()).toContain('401');
+  });
+
+  it('answers at once when the project has no repository', async () => {
+    linked = null;
+    await ask('{"head":"t","title":"T"}');
+    expect(await reply()).toContain('not linked to a GitHub or Forgejo repository');
+    expect(await dialog()).toBeUndefined();
+  });
+
+  it('answers at once when the request is malformed', async () => {
+    await ask('{"head":"t"}');
+    expect(await reply()).toContain('malformed');
+    expect(await dialog()).toBeUndefined();
+  });
+});
+
 describe('push tool installation', () => {
   it('is installed for a linked project and removed when the link goes', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'pp-push-inst-'));
@@ -237,6 +408,7 @@ describe('push tool installation', () => {
     );
     await start();
     expect(readFileSync(file, 'utf8')).toContain("name: 'push_to_repo'");
+    expect(readFileSync(file, 'utf8')).toContain("name: 'open_pull_request'");
     db.prepare('UPDATE projects SET repo = NULL, repo_host = NULL WHERE id = ?').run(project.id);
     await start();
     expect(existsSync(file)).toBe(false);

@@ -106,6 +106,11 @@ export function buildApp(opts: AppOptions = {}) {
         request.message,
       );
     },
+    pullRequest(projectId, request) {
+      const p = db.prepare('SELECT repo_host FROM projects WHERE id = ?').get(projectId) as
+        { repo_host: string | null } | undefined;
+      return (p?.repo_host === 'forgejo' ? forgejo : github).pullRequest(projectId, request);
+    },
   };
   const sessions = new SessionManager(
     db,

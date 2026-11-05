@@ -17,8 +17,11 @@ describe('agentNote', () => {
     const forgejo = agentNote('codyw/Rufus_Decomp', 'forgejo')!;
     expect(forgejo).toContain('Forgejo repository `codyw/Rufus_Decomp`');
     expect(forgejo).toMatch(/Do not run `git push`/);
-    expect(forgejo).toMatch(/do not ask the user for a token/);
+    expect(forgejo).toMatch(/Do not ask the user for a token/);
     expect(agentNote('o/r', null)).toContain('GitHub repository `o/r`');
+    // The failure that sent agents to curl the API and ask for a token.
+    expect(forgejo).toContain('open_pull_request');
+    expect(forgejo).toMatch(/Forgejo API with curl or node/);
   });
 });
 

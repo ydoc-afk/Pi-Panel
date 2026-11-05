@@ -5,10 +5,14 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { agentNote } from './agent-note.js';
 import { runtimeNote } from './runtimes.js';
 import {
+  PR_DIALOG_TITLE,
   PUSH_DIALOG_TITLE,
+  describePullRequest,
   describePush,
+  parsePullRequestRequest,
   parsePushRequest,
   type ForgePusher,
+  type PullRequestRequest,
   type PushRequest,
 } from './agent-push.js';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
@@ -63,11 +67,15 @@ export const sessionDto = (r: SessionRow) => ({
   createdAt: r.created_at,
 });
 
-/** A dialog waiting for the user; push is set for the reserved push-to-repository confirmation. */
+/** What an approved reserved confirmation does on the host. */
+type ForgeAction =
+  { kind: 'push'; request: PushRequest } | { kind: 'pr'; request: PullRequestRequest };
+
+/** A dialog waiting for the user; action is set for the reserved push and pull request confirmations. */
 interface PendingUi {
   timer: ReturnType<typeof setTimeout> | null;
-  push?: PushRequest;
-  /** A push is running, so a second answer must not start another. */
+  action?: ForgeAction;
+  /** The action is running, so a second answer must not start another. */
   busy?: boolean;
 }
 
@@ -475,10 +483,14 @@ export class SessionManager {
       else shown.set(key, value);
       return true;
     }
-    let push: PushRequest | undefined;
-    if (method === 'input' && event.title === PUSH_DIALOG_TITLE && typeof event.id === 'string') {
-      push = this.acceptPush(id, event);
-      if (!push) return false; // answered (refused) without bothering the user
+    let action: ForgeAction | undefined;
+    if (
+      method === 'input' &&
+      (event.title === PUSH_DIALOG_TITLE || event.title === PR_DIALOG_TITLE) &&
+      typeof event.id === 'string'
+    ) {
+      action = this.acceptForgeAction(id, event, event.title === PR_DIALOG_TITLE ? 'pr' : 'push');
+      if (!action) return false; // answered (refused) without bothering the user
     }
     if (UI_DIALOGS.has(method) && typeof event.id === 'string') {
       let pending = this.uiPending.get(id);
@@ -489,7 +501,7 @@ export class SessionManager {
         timer: ms
           ? setTimeout(() => this.retireUi(id, requestId, 'timeout'), ms + UI_TIMEOUT_GRACE_MS)
           : null,
-        ...(push ? { push } : {}),
+        ...(action ? { action } : {}),
       });
     }
     return true;
@@ -507,11 +519,16 @@ export class SessionManager {
   }
 
   /**
-   * An agent's push_to_repo tool asked for a push. Turn its dialog into a confirmation written by the
-   * panel (the agent's own words never reach the user as the question), or answer it right away when
-   * there is nothing to confirm: no linked repository, or a malformed request.
+   * An agent's push_to_repo or open_pull_request tool asked for something only the host can do. Turn
+   * its dialog into a confirmation written by the panel (the agent's own words never reach the user as
+   * the question), or answer it right away when there is nothing to confirm: no linked repository, or
+   * a malformed request.
    */
-  private acceptPush(id: number, event: PiEvent): PushRequest | undefined {
+  private acceptForgeAction(
+    id: number,
+    event: PiEvent,
+    kind: ForgeAction['kind'],
+  ): ForgeAction | undefined {
     const refuse = (error: string) => {
       try {
         this.live.get(id)?.send({
@@ -524,32 +541,52 @@ export class SessionManager {
       }
       return undefined;
     };
-    const request = parsePushRequest(event.placeholder);
-    if (!request) return refuse('The push request was malformed.');
+    const what = kind === 'pr' ? 'pull request' : 'push';
+    const request =
+      kind === 'pr'
+        ? parsePullRequestRequest(event.placeholder)
+        : parsePushRequest(event.placeholder);
+    if (!request) return refuse(`The ${what} request was malformed.`);
     const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as
       { project_id: number } | undefined;
     const link = row ? this.pusher?.link(row.project_id) : null;
     if (!link) return refuse('This project is not linked to a GitHub or Forgejo repository.');
+    if (kind === 'pr' && !this.pusher?.pullRequest) {
+      return refuse('Opening pull requests is unavailable.');
+    }
     // What the user sees: the panel's wording, shown as a plain yes/no question.
     event.method = 'confirm';
-    event.title = `Push to ${link.forge}?`;
-    event.message = describePush(link.forge, link.repo, request);
     delete event.placeholder;
-    return request;
+    if (kind === 'pr') {
+      event.title = `Open a pull request on ${link.forge}?`;
+      event.message = describePullRequest(link.forge, link.repo, request as PullRequestRequest);
+      return { kind, request: request as PullRequestRequest };
+    }
+    event.title = `Push to ${link.forge}?`;
+    event.message = describePush(link.forge, link.repo, request as PushRequest);
+    return { kind, request: request as PushRequest };
   }
 
-  /** Runs an approved push from the host and reports the outcome as the agent will read it. */
-  private async runPush(sessionId: number, request: PushRequest): Promise<string> {
+  /** Runs an approved action from the host and reports the outcome as the agent will read it. */
+  private async runForgeAction(sessionId: number, action: ForgeAction): Promise<string> {
     const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(sessionId) as
       { project_id: number } | undefined;
-    if (!row || !this.pusher)
-      return JSON.stringify({ ok: false, error: 'Pushing is unavailable.' });
+    if (!row || !this.pusher) {
+      return JSON.stringify({ ok: false, error: 'This action is unavailable.' });
+    }
     try {
-      return JSON.stringify({ ok: true, ...(await this.pusher.push(row.project_id, request)) });
+      const outcome =
+        action.kind === 'pr'
+          ? await this.pusher.pullRequest!(row.project_id, action.request)
+          : await this.pusher.push(row.project_id, action.request);
+      return JSON.stringify({ ok: true, ...outcome });
     } catch (err) {
       return JSON.stringify({
         ok: false,
-        error: err instanceof Error ? err.message : 'Push failed',
+        error:
+          err instanceof Error
+            ? err.message
+            : `${action.kind === 'pr' ? 'Pull request' : 'Push'} failed`,
       });
     }
   }
@@ -579,14 +616,14 @@ export class SessionManager {
     if (!client || !entry || entry.busy) {
       throw new SessionError(409, 'That question is no longer waiting for an answer');
     }
-    if (entry.push) {
-      // Only yes or no is meaningful here; the outcome of an approved push goes back to the agent.
+    if (entry.action) {
+      // Only yes or no is meaningful here; the outcome of an approved action goes back to the agent.
       if (typeof body.confirmed !== 'boolean' && body.cancelled !== true) {
         throw new SessionError(400, 'Answer with confirmed or cancelled');
       }
       if (body.confirmed === true) {
         entry.busy = true;
-        answer = { value: await this.runPush(id, entry.push) };
+        answer = { value: await this.runForgeAction(id, entry.action) };
       } else {
         answer = { cancelled: true };
       }

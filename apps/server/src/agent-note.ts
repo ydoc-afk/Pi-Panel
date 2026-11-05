@@ -33,8 +33,11 @@ This project is linked to the ${forge} repository \`${repo}\`.
 - Commit your work locally with git as usual.
 - To publish it, call the \`push_to_repo\` tool with the branch (\`git branch --show-current\`). The
   panel asks the user to confirm, pushes from the host if they agree, and returns the result.
-- Do not run \`git push\`, and do not ask the user for a token, password or other credentials.
-  This sandbox has none by design. A push from here fails with "could not read Username".
+- To open a pull request, push the branch first, then call the \`open_pull_request\` tool with the
+  branch, a title and a description. The user confirms and the panel opens it with its own account.
+- Do not run \`git push\` and do not call the ${forge} API with curl or node (it answers 401).
+  Do not ask the user for a token, password or other credentials: this sandbox has none by design,
+  so that is not a missing setting. Use the two tools above. A push from here fails with "could not read Username".
 - If the user declined, do not retry unless they ask. If it failed, report the error as it is.
 `;
 }
