@@ -90,6 +90,8 @@ export const recreateProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}/recreate`, json({}))).project;
 
 export interface Session {
+  /** 'lab' for the package lab's design session, which the session list leaves out. */
+  kind?: string;
   id: number;
   projectId: number;
   name: string;
@@ -788,3 +790,7 @@ export const compactSession = (sessionId: number, instructions?: string) =>
     `/api/sessions/${sessionId}/compact`,
     send('POST', instructions ? { instructions } : {}),
   );
+
+/** The package lab's design session for a project; made on first use. */
+export const getLabSession = async (projectId: number) =>
+  (await request<{ session: Session }>(`/api/projects/${projectId}/lab/session`)).session;

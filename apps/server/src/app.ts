@@ -110,6 +110,7 @@ export function buildApp(opts: AppOptions = {}) {
   );
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
+  sessions.setLabRunner((projectId, request) => lab.run(projectId, request));
   const rea = new ReaBuilder(runtime, { dataDir });
   const runtimes = new RuntimeBuilder(runtime, { dataDir });
   const packages = new PackageService(db, runtime, sessions, dataDir, {

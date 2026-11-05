@@ -336,6 +336,20 @@ export class FakePiProcess implements RunningProcess {
       const answer = this.uiAnswers.get(askId);
       message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
     }
+    // "/lab <json>" is what the lab_run tool does: ask the reserved dialog and wait for the report.
+    if (message.startsWith('/lab ')) {
+      const askId = `ui-${++this.uiSeq}`;
+      this.send({
+        type: 'extension_ui_request',
+        id: askId,
+        method: 'input',
+        title: '@pi-panel/lab-run',
+        placeholder: message.slice(5),
+      });
+      while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead) await tick();
+      const answer = this.uiAnswers.get(askId);
+      message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
+    }
     // "/pr <json>" is what the open_pull_request tool does, through its own reserved dialog.
     if (message.startsWith('/pr ')) {
       const askId = `ui-${++this.uiSeq}`;

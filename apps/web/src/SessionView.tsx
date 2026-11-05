@@ -355,7 +355,16 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SessionView({ sessionId, name }: { sessionId: number; name?: string }) {
+export function SessionView({
+  sessionId,
+  name,
+  onIdle,
+}: {
+  sessionId: number;
+  name?: string;
+  /** Called each time the agent finishes a turn, e.g. to rescan files it may have written. */
+  onIdle?: () => void;
+}) {
   const [t, push] = useReducer(
     (state: Transcript, m: StreamMessage | 'reset') =>
       m === 'reset' ? emptyTranscript : applyMessage(state, m),
@@ -363,6 +372,11 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
   );
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !t.running) onIdle?.();
+    wasRunning.current = t.running;
+  }, [t.running]);
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
   const [following, setFollowing] = useState(true);
   const lastSeq = useRef(0);
