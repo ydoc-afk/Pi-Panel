@@ -372,6 +372,27 @@ describe('the agent tools across repositories', () => {
   });
 });
 
+describe('what members may do', () => {
+  it('keeps clone, pull and push (which use the admin’s forge accounts) away from members', async () => {
+    const { memberBlocked } = await import('./auth.js');
+    const P = '/api/projects/:id/repos';
+    for (const [method, path] of [
+      ['POST', P],
+      ['POST', `${P}/push`],
+      ['POST', `${P}/pull`],
+      ['POST', `${P}/:rid/push`],
+      ['POST', `${P}/:rid/pull`],
+      ['POST', `${P}/:rid/pr`],
+    ] as const) {
+      expect(memberBlocked(method, path), `${method} ${path}`).toBe(true);
+    }
+    // Looking at the list, choosing what is included and forgetting a repository stay open.
+    expect(memberBlocked('GET', P)).toBe(false);
+    expect(memberBlocked('PATCH', `${P}/:rid`)).toBe(false);
+    expect(memberBlocked('DELETE', `${P}/:rid`)).toBe(false);
+  });
+});
+
 describe('migration 7', () => {
   it('turns each existing project repository into a root repository row', () => {
     const root = mkdtempSync(join(tmpdir(), 'pp-mig-'));
