@@ -7,6 +7,8 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { SANDBOX_UID, workspaceDir } from './paths.js';
 import type { Secrets } from './secrets.js';
 
+export type ForgeKind = 'github' | 'forgejo';
+
 export class GitHubError extends Error {
   constructor(
     readonly status: number,
@@ -17,6 +19,8 @@ export class GitHubError extends Error {
 }
 
 export interface GitHubOptions {
+  /** Which forge this service talks to. Forgejo's base URL is stored with the account. */
+  kind?: ForgeKind;
   /** Base for repository URLs; tests point this at a local directory of bare repos. */
   webBase?: string;
   apiBase?: string;
@@ -32,6 +36,8 @@ export interface GitHubOptions {
 
 const MAX_OUTPUT = 1024 * 1024;
 const REPO_RE = /^([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\/([A-Za-z0-9._-]{1,100})$/;
+// Forgejo allows underscores and dots in owner names and longer ones.
+const FORGEJO_REPO_RE = /^([A-Za-z0-9][A-Za-z0-9._-]{0,99})\/([A-Za-z0-9._-]{1,100})$/;
 
 /** Config keys a workspace's .git/config may contain; anything else could run code or redirect traffic. */
 const SAFE_CONFIG_KEYS = [
@@ -45,35 +51,72 @@ interface Account {
   login: string;
   userId: number;
   token: string;
+  /** Origin (plus any path prefix) that repositories are cloned from and tokens are sent to. */
+  webBase: string;
+  /** Git protocols this account's remote may use. */
+  protocols: string[];
+  /** Username for git's Basic auth: GitHub ignores it, Forgejo needs the real login. */
+  gitUser: string;
+  authorEmail: string;
 }
 
 interface ProjectRow {
   id: number;
   repo: string | null;
+  repo_host: string | null;
 }
 
-export function parseRepo(input: unknown): string {
+/** Parses owner/name, or a full repository URL on `webBase`. */
+export function parseRepo(input: unknown, kind: ForgeKind = 'github', webBase?: string): string {
+  const label = kind === 'github' ? 'GitHub' : 'Forgejo';
   if (typeof input !== 'string') throw new GitHubError(400, 'repo must be a string');
   let value = input.trim();
-  const url = /^https:\/\/github\.com\/(.+?)\/?$/.exec(value);
-  if (url?.[1]) value = url[1];
-  value = value.replace(/\.git$/, '');
-  const m = REPO_RE.exec(value);
+  const prefix = (kind === 'github' ? 'https://github.com' : (webBase ?? '')).replace(/\/+$/, '');
+  if (prefix && value.startsWith(`${prefix}/`)) value = value.slice(prefix.length + 1);
+  value = value.replace(/\/+$/, '').replace(/\.git$/, '');
+  const m = (kind === 'github' ? REPO_RE : FORGEJO_REPO_RE).exec(value);
   if (!m || m[2] === '.' || m[2] === '..') {
-    throw new GitHubError(400, 'repo must look like owner/name or https://github.com/owner/name');
+    throw new GitHubError(
+      400,
+      `repo must look like owner/name or a ${label} repository URL (${prefix || 'https://github.com'}/owner/name)`,
+    );
   }
   return value;
 }
 
-export function redact(text: string, token: string | undefined): string {
+export function redact(text: string, token: string | undefined, user = 'x-access-token'): string {
   if (!token) return text;
-  const b64 = Buffer.from(`x-access-token:${token}`).toString('base64');
+  const b64 = Buffer.from(`${user}:${token}`).toString('base64');
   return text.split(b64).join('***').split(token).join('***');
 }
 
+/** Normalizes a Forgejo instance address: http(s) only, no credentials, query or fragment. */
+export function parseForgejoUrl(input: unknown): string {
+  if (typeof input !== 'string' || input.length > 2048) {
+    throw new GitHubError(400, 'Forgejo URL must be a string');
+  }
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    throw new GitHubError(400, 'Forgejo URL must look like http://localhost:3001');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new GitHubError(400, 'Forgejo URL must start with http:// or https://');
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    throw new GitHubError(400, 'Forgejo URL must not contain credentials, a query or a fragment');
+  }
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+}
+
 export class GitHubService {
+  private readonly kind: ForgeKind;
+  private readonly table: string;
+  private readonly label: string;
   private readonly webBase: string;
   private readonly apiBase: string;
+  private readonly testWebBase: string | undefined;
   private readonly fetchFn: typeof fetch;
   private readonly allowProtocols: string[];
   private readonly dropPrivileges: boolean;
@@ -86,6 +129,10 @@ export class GitHubService {
     private readonly dataDir: string,
     opts: GitHubOptions = {},
   ) {
+    this.kind = opts.kind ?? 'github';
+    this.table = this.kind === 'github' ? 'github_account' : 'forgejo_account';
+    this.label = this.kind === 'github' ? 'GitHub' : 'Forgejo';
+    this.testWebBase = this.kind === 'forgejo' ? opts.webBase?.replace(/\/+$/, '') : undefined;
     this.webBase = (opts.webBase ?? 'https://github.com').replace(/\/+$/, '');
     this.apiBase = (opts.apiBase ?? 'https://api.github.com').replace(/\/+$/, '');
     this.fetchFn = opts.fetch ?? fetch;
@@ -95,33 +142,111 @@ export class GitHubService {
 
   // ---- account -----------------------------------------------------------------------------
 
-  account(): { connected: boolean; login?: string } {
-    const row = this.db.prepare('SELECT login FROM github_account WHERE id = 1').get() as
-      { login: string } | undefined;
-    return row ? { connected: true, login: row.login } : { connected: false };
+  account(): { connected: boolean; login?: string; baseUrl?: string } {
+    const row = this.db
+      .prepare(
+        `SELECT login${this.kind === 'forgejo' ? ', base_url' : ''} FROM ${this.table} WHERE id = 1`,
+      )
+      .get() as { login: string; base_url?: string } | undefined;
+    if (!row) return { connected: false };
+    return {
+      connected: true,
+      login: row.login,
+      ...(row.base_url ? { baseUrl: row.base_url } : {}),
+    };
   }
 
   private requireAccount(): Account {
     const row = this.db
-      .prepare('SELECT login, user_id, token_enc FROM github_account WHERE id = 1')
-      .get() as { login: string; user_id: number; token_enc: string } | undefined;
-    if (!row)
-      throw new GitHubError(409, 'GitHub is not connected. Add a personal access token first.');
-    return { login: row.login, userId: row.user_id, token: this.secrets.decrypt(row.token_enc) };
+      .prepare(
+        `SELECT login, user_id, token_enc${this.kind === 'forgejo' ? ', base_url' : ''} FROM ${this.table} WHERE id = 1`,
+      )
+      .get() as
+      { login: string; user_id: number; token_enc: string; base_url?: string } | undefined;
+    if (!row) {
+      throw new GitHubError(
+        409,
+        `${this.label} is not connected. Add a personal access token first.`,
+      );
+    }
+    return this.makeAccount(
+      row.login,
+      row.user_id,
+      this.secrets.decrypt(row.token_enc),
+      row.base_url,
+    );
+  }
+
+  private makeAccount(login: string, userId: number, token: string, baseUrl?: string): Account {
+    if (this.kind === 'github') {
+      return {
+        login,
+        userId,
+        token,
+        webBase: this.webBase,
+        protocols: this.allowProtocols,
+        gitUser: 'x-access-token',
+        authorEmail: `${userId}+${login}@users.noreply.github.com`,
+      };
+    }
+    const base = baseUrl ?? '';
+    const host = base ? new URL(base).hostname : 'localhost';
+    return {
+      login,
+      userId,
+      token,
+      webBase: this.testWebBase ?? base,
+      protocols:
+        this.allowProtocols.length === 1 && this.allowProtocols[0] === 'https'
+          ? [new URL(base).protocol.replace(':', '')]
+          : this.allowProtocols,
+      gitUser: login,
+      authorEmail: `${userId}+${login}@noreply.${host}`,
+    };
   }
 
   private optionalAccount(): Account | undefined {
     return this.account().connected ? this.requireAccount() : undefined;
   }
 
-  async connect(token: unknown): Promise<{ login: string }> {
+  private cleanToken(token: unknown): string {
     if (typeof token !== 'string' || !/^\S{8,4096}$/.test(token.trim())) {
       throw new GitHubError(400, 'token must be a non-empty string without whitespace');
     }
-    const clean = token.trim();
-    const user = (await this.api<{ login?: string; id?: number }>('GET', '/user', clean)) ?? {};
+    return token.trim();
+  }
+
+  /** Forgejo accounts carry their instance address; GitHub's is fixed. */
+  private baseFor(baseUrlInput: unknown): string | undefined {
+    return this.kind === 'forgejo' ? parseForgejoUrl(baseUrlInput) : undefined;
+  }
+
+  async connect(
+    tokenInput: unknown,
+    baseUrlInput?: unknown,
+  ): Promise<{ login: string; baseUrl?: string }> {
+    const clean = this.cleanToken(tokenInput);
+    const baseUrl = this.baseFor(baseUrlInput);
+    const user =
+      (await this.api<{ login?: string; id?: number }>(
+        'GET',
+        '/user',
+        clean,
+        undefined,
+        baseUrl,
+      )) ?? {};
     if (typeof user.login !== 'string' || typeof user.id !== 'number') {
-      throw new GitHubError(502, 'Unexpected response from GitHub');
+      throw new GitHubError(502, `Unexpected response from ${this.label}`);
+    }
+    if (this.kind === 'forgejo') {
+      this.db
+        .prepare(
+          `INSERT INTO forgejo_account (id, base_url, login, user_id, token_enc, created_at) VALUES (1, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET base_url = excluded.base_url, login = excluded.login,
+             user_id = excluded.user_id, token_enc = excluded.token_enc, created_at = excluded.created_at`,
+        )
+        .run(baseUrl!, user.login, user.id, this.secrets.encrypt(clean), Date.now());
+      return { login: user.login, baseUrl: baseUrl! };
     }
     this.db
       .prepare(
@@ -134,54 +259,98 @@ export class GitHubService {
   }
 
   /**
-   * Checks a token against GitHub and reports which account it belongs to. Nothing is stored.
+   * Checks a token against the forge and reports which account it belongs to. Nothing is stored.
    * A blank token tests the stored one, when there is one.
    */
-  async testToken(tokenInput: unknown): Promise<{ login: string; id: number }> {
+  async testToken(
+    tokenInput: unknown,
+    baseUrlInput?: unknown,
+  ): Promise<{ login: string; id: number }> {
     let token: string;
+    let baseUrl: string | undefined;
     if (typeof tokenInput === 'string' && tokenInput.trim() !== '') {
-      if (!/^\S{8,4096}$/.test(tokenInput.trim())) {
-        throw new GitHubError(400, 'token must be a non-empty string without whitespace');
-      }
-      token = tokenInput.trim();
+      token = this.cleanToken(tokenInput);
+      baseUrl = this.baseFor(baseUrlInput);
     } else {
       const stored = this.optionalAccount();
       if (!stored) throw new GitHubError(400, 'Paste a token to test, or connect one first');
       token = stored.token;
+      baseUrl = this.kind === 'forgejo' ? this.account().baseUrl : undefined;
     }
-    const user = (await this.api<{ login?: string; id?: number }>('GET', '/user', token)) ?? {};
+    const user =
+      (await this.api<{ login?: string; id?: number }>(
+        'GET',
+        '/user',
+        token,
+        undefined,
+        baseUrl,
+      )) ?? {};
     if (typeof user.login !== 'string' || typeof user.id !== 'number') {
-      throw new GitHubError(502, 'Unexpected response from GitHub');
+      throw new GitHubError(502, `Unexpected response from ${this.label}`);
     }
     return { login: user.login, id: user.id };
   }
 
   disconnect() {
-    this.db.prepare('DELETE FROM github_account WHERE id = 1').run();
+    this.db.prepare(`DELETE FROM ${this.table} WHERE id = 1`).run();
   }
 
   // ---- project operations ------------------------------------------------------------------
 
   async status(projectId: number) {
     const project = this.project(projectId);
-    if (!project.repo) return { repo: null, branch: null, changes: 0 };
+    if (!project.repo) return { repo: null, branch: null, changes: 0, ahead: null };
+    if (this.otherHost(project)) {
+      return {
+        repo: null,
+        branch: null,
+        changes: 0,
+        ahead: null,
+        linkedTo: project.repo_host ?? 'github',
+      };
+    }
     return this.exclusive(projectId, async () => {
       const dir = await this.safeRepoDir(projectId);
       const branch = (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() || null;
       const changes = await this.changeCount(dir);
-      return { repo: project.repo, branch, changes };
+      const ahead = branch ? await this.commitsAhead(dir, project.repo!, branch) : null;
+      return { repo: project.repo, branch, changes, ahead };
     });
+  }
+
+  /**
+   * Commits on the branch that the remote does not have yet, asked of the remote itself: a push by
+   * URL does not move any local remote-tracking ref, and the agent commits without ever pushing, so
+   * the workspace cannot tell. null when the remote cannot be asked in time, or has commits the
+   * workspace lacks.
+   */
+  private async commitsAhead(dir: string, repo: string, branch: string): Promise<number | null> {
+    try {
+      const account = this.optionalAccount();
+      if (!account && this.kind === 'forgejo') return null; // no instance address without an account
+      const url = `${account?.webBase ?? this.webBase}/${repo}.git`;
+      const out = await this.git(dir, ['ls-remote', url, `refs/heads/${branch}`], {
+        account,
+        timeoutMs: 10_000,
+      });
+      const sha = out.trim().split(/\s/)[0];
+      // No such branch on the remote yet: every commit on this one is unpublished.
+      const range = sha ? [`${sha}..HEAD`] : ['HEAD'];
+      return Number((await this.git(dir, ['rev-list', '--count', ...range])).trim());
+    } catch {
+      return null;
+    }
   }
 
   async clone(projectId: number, repoInput: unknown, branchInput?: unknown) {
     const project = this.project(projectId);
     if (project.repo) throw new GitHubError(409, 'Project is already linked to a repository');
-    const repo = parseRepo(repoInput);
+    const account = this.kind === 'forgejo' ? this.requireAccount() : this.optionalAccount();
+    const repo = parseRepo(repoInput, this.kind, account?.webBase);
     const branch =
       branchInput === undefined || branchInput === ''
         ? undefined
         : await this.branchName(branchInput);
-    const account = this.optionalAccount();
     return this.exclusive(projectId, async () => {
       const dir = workspaceDir(this.dataDir, projectId);
       if ((await readdir(dir)).length > 0) throw new GitHubError(409, 'Workspace is not empty');
@@ -192,7 +361,7 @@ export class GitHubService {
             'clone',
             ...(branch ? ['--branch', branch] : []),
             '--',
-            `${this.webBase}/${repo}.git`,
+            `${account?.webBase ?? this.webBase}/${repo}.git`,
             '.',
           ],
           { account, timeoutMs: 10 * 60_000 },
@@ -203,7 +372,9 @@ export class GitHubService {
           await rm(join(dir, entry), { recursive: true, force: true });
         throw err;
       }
-      this.db.prepare('UPDATE projects SET repo = ? WHERE id = ?').run(repo, projectId);
+      this.db
+        .prepare('UPDATE projects SET repo = ?, repo_host = ? WHERE id = ?')
+        .run(repo, this.kind === 'github' ? null : this.kind, projectId);
       return { repo, branch: (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() };
     });
   }
@@ -211,6 +382,7 @@ export class GitHubService {
   async push(projectId: number, branchInput: unknown, messageInput?: unknown) {
     const project = this.project(projectId);
     if (!project.repo) throw new GitHubError(409, 'Project has no linked repository');
+    this.assertHost(project);
     const account = this.requireAccount();
     const branch = await this.branchName(branchInput);
     const message =
@@ -232,7 +404,7 @@ export class GitHubService {
         [
           'push',
           '--porcelain',
-          `${this.webBase}/${project.repo}.git`,
+          `${account.webBase}/${project.repo}.git`,
           `refs/heads/${branch}:refs/heads/${branch}`,
         ],
         { account, timeoutMs: 5 * 60_000, failStatus: 409, failPrefix: 'Push failed' },
@@ -248,6 +420,7 @@ export class GitHubService {
   ) {
     const project = this.project(projectId);
     if (!project.repo) throw new GitHubError(409, 'Project has no linked repository');
+    this.assertHost(project);
     const account = this.requireAccount();
     const head = await this.branchName(input.head);
     if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 256) {
@@ -262,6 +435,8 @@ export class GitHubService {
         'GET',
         `/repos/${project.repo}`,
         account.token,
+        undefined,
+        this.kind === 'forgejo' ? this.account().baseUrl : undefined,
       );
       if (!info?.default_branch)
         throw new GitHubError(502, 'Could not determine the default branch');
@@ -274,18 +449,33 @@ export class GitHubService {
       `/repos/${project.repo}/pulls`,
       account.token,
       { title: input.title.trim(), head, base, body: input.body ?? '' },
+      this.kind === 'forgejo' ? this.account().baseUrl : undefined,
     );
-    if (!pr?.html_url) throw new GitHubError(502, 'Unexpected response from GitHub');
+    if (!pr?.html_url) throw new GitHubError(502, `Unexpected response from ${this.label}`);
     return { url: pr.html_url, number: pr.number ?? null, base, head };
   }
 
   // ---- internals ---------------------------------------------------------------------------
 
   private project(id: number): ProjectRow {
-    const row = this.db.prepare('SELECT id, repo FROM projects WHERE id = ?').get(id) as
+    const row = this.db.prepare('SELECT id, repo, repo_host FROM projects WHERE id = ?').get(id) as
       ProjectRow | undefined;
     if (!row) throw new GitHubError(404, 'Project not found');
     return row;
+  }
+
+  /** True when the project's repository lives on the other forge. */
+  private otherHost(project: ProjectRow): boolean {
+    return !!project.repo && (project.repo_host ?? 'github') !== this.kind;
+  }
+
+  private assertHost(project: ProjectRow) {
+    if (this.otherHost(project)) {
+      throw new GitHubError(
+        409,
+        `Project is linked to a ${project.repo_host === 'forgejo' ? 'Forgejo' : 'GitHub'} repository, not ${this.label}`,
+      );
+    }
   }
 
   /** Serializes git operations per project so they cannot interleave. */
@@ -380,17 +570,15 @@ export class GitHubService {
       GIT_CONFIG_NOSYSTEM: '1',
       GIT_CONFIG_GLOBAL: await this.globalConfigPath(),
       GIT_AUTHOR_NAME: account?.login ?? 'Pi-Panel',
-      GIT_AUTHOR_EMAIL: account
-        ? `${account.userId}+${account.login}@users.noreply.github.com`
-        : 'pi-panel@localhost',
+      GIT_AUTHOR_EMAIL: account?.authorEmail ?? 'pi-panel@localhost',
     };
     env.GIT_COMMITTER_NAME = env.GIT_AUTHOR_NAME!;
     env.GIT_COMMITTER_EMAIL = env.GIT_AUTHOR_EMAIL!;
     if (account) {
       // Command-scope config: never written to disk, and only sent to the configured GitHub origin.
       env.GIT_CONFIG_COUNT = '1';
-      env.GIT_CONFIG_KEY_0 = `http.${this.webBase}/.extraHeader`;
-      env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(`x-access-token:${account.token}`).toString('base64')}`;
+      env.GIT_CONFIG_KEY_0 = `http.${account.webBase}/.extraHeader`;
+      env.GIT_CONFIG_VALUE_0 = `Authorization: Basic ${Buffer.from(`${account.gitUser}:${account.token}`).toString('base64')}`;
     }
     const hardening = [
       '-c',
@@ -401,7 +589,10 @@ export class GitHubService {
       'credential.helper=',
       '-c',
       'protocol.allow=never',
-      ...this.allowProtocols.flatMap((p) => ['-c', `protocol.${p}.allow=always`]),
+      ...(account?.protocols ?? this.allowProtocols).flatMap((p) => [
+        '-c',
+        `protocol.${p}.allow=always`,
+      ]),
     ];
     const root = typeof process.getuid === 'function' && process.getuid() === 0;
     const result = await runProcess('git', [...hardening, ...args], {
@@ -414,6 +605,7 @@ export class GitHubService {
       const detail = redact(
         result.stderr.trim() || result.stdout.trim() || 'no output',
         account?.token,
+        account?.gitUser,
       );
       const what = opts.failPrefix ?? `git ${args[0]} failed`;
       throw new GitHubError(opts.failStatus ?? 409, `${what}: ${detail.slice(0, 1000)}`);
@@ -426,15 +618,18 @@ export class GitHubService {
     path: string,
     token: string,
     body?: unknown,
+    forgejoBase?: string,
   ): Promise<T | undefined> {
     let res: Response;
+    const github = this.kind === 'github';
+    const apiBase = github ? this.apiBase : `${forgejoBase ?? ''}/api/v1`;
     try {
-      res = await this.fetchFn(`${this.apiBase}${path}`, {
+      res = await this.fetchFn(`${apiBase}${path}`, {
         method,
         headers: {
-          accept: 'application/vnd.github+json',
-          authorization: `Bearer ${token}`,
-          'x-github-api-version': '2022-11-28',
+          accept: github ? 'application/vnd.github+json' : 'application/json',
+          authorization: github ? `Bearer ${token}` : `token ${token}`,
+          ...(github ? { 'x-github-api-version': '2022-11-28' } : {}),
           'user-agent': 'pi-panel',
           ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         },
@@ -443,7 +638,7 @@ export class GitHubService {
         signal: AbortSignal.timeout(15_000),
       });
     } catch {
-      throw new GitHubError(502, 'Could not reach the GitHub API');
+      throw new GitHubError(502, `Could not reach the ${this.label} API`);
     }
     const data = (await res.json().catch(() => undefined)) as
       (T & { message?: string; errors?: { message?: string }[] }) | undefined;
@@ -453,7 +648,7 @@ export class GitHubService {
         .join('; ');
       throw new GitHubError(
         502,
-        redact(`GitHub API ${res.status}${detail ? `: ${detail}` : ''}`, token),
+        redact(`${this.label} API ${res.status}${detail ? `: ${detail}` : ''}`, token),
       );
     }
     return data;
@@ -512,42 +707,51 @@ async function handle<T>(reply: FastifyReply, fn: () => Promise<T> | T) {
   }
 }
 
-export function registerGitHub(app: FastifyInstance, gh: GitHubService) {
+export function registerGitHub(
+  app: FastifyInstance,
+  gh: GitHubService,
+  kind: ForgeKind = 'github',
+) {
   const id = (s: string) => (/^\d+$/.test(s) ? Number(s) : -1);
   type P = { Params: { id: string } };
+  const root = `/api/${kind}`;
+  type AccountBody = { token?: unknown; baseUrl?: unknown };
 
-  app.get('/api/github', async () => gh.account());
-  app.put('/api/github', (req, reply) =>
-    handle(reply, async () => ({
-      connected: true,
-      ...(await gh.connect(((req.body ?? {}) as { token?: unknown }).token)),
-    })),
+  app.get(root, async () => gh.account());
+  app.put(root, (req, reply) =>
+    handle(reply, async () => {
+      const b = (req.body ?? {}) as AccountBody;
+      return { connected: true, ...(await gh.connect(b.token, b.baseUrl)) };
+    }),
   );
   // Checks a token without saving it. Nothing is stored, and errors never echo the token.
-  app.post('/api/github/test', (req, reply) =>
-    handle(reply, async () => gh.testToken(((req.body ?? {}) as { token?: unknown }).token)),
+  app.post(`${root}/test`, (req, reply) =>
+    handle(reply, async () => {
+      const b = (req.body ?? {}) as AccountBody;
+      return gh.testToken(b.token, b.baseUrl);
+    }),
   );
-  app.delete('/api/github', async (_req, reply) => {
+  app.delete(root, async (_req, reply) => {
     gh.disconnect();
     return reply.code(204).send();
   });
 
-  app.get<P>('/api/projects/:id/github', (req, reply) =>
+  app.get<P>(`/api/projects/:id/${kind}`, (req, reply) =>
     handle(reply, () => gh.status(id(req.params.id))),
   );
-  app.post<P>('/api/projects/:id/github/clone', (req, reply) =>
+  app.post<P>(`/api/projects/:id/${kind}/clone`, (req, reply) =>
     handle(reply, () => {
       const { repo, branch } = (req.body ?? {}) as { repo?: unknown; branch?: unknown };
       return gh.clone(id(req.params.id), repo, branch);
     }),
   );
-  app.post<P>('/api/projects/:id/github/push', (req, reply) =>
+  app.post<P>(`/api/projects/:id/${kind}/push`, (req, reply) =>
     handle(reply, () => {
       const { branch, message } = (req.body ?? {}) as { branch?: unknown; message?: unknown };
       return gh.push(id(req.params.id), branch, message);
     }),
   );
-  app.post<P>('/api/projects/:id/github/pr', (req, reply) =>
+  app.post<P>(`/api/projects/:id/${kind}/pr`, (req, reply) =>
     handle(reply, async () =>
       reply.code(201).send(await gh.pullRequest(id(req.params.id), (req.body ?? {}) as object)),
     ),

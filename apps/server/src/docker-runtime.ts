@@ -10,6 +10,7 @@ import type {
   EphemeralSpec,
   ExecResult,
   ExecSpec,
+  ImageInfo,
   RunningProcess,
   SidecarSpec,
   SidecarState,
@@ -18,6 +19,13 @@ import type {
 const DEFAULT_IMAGE = 'pi-panel/sandbox-base:latest';
 
 const MAX_LOG_BYTES = 1024 * 1024;
+
+/** Resource limits for project sandboxes; override with SANDBOX_MEMORY_MB and SANDBOX_CPUS. */
+export function sandboxLimits(env: NodeJS.ProcessEnv = process.env) {
+  const memoryMb = Number(env.SANDBOX_MEMORY_MB) > 0 ? Number(env.SANDBOX_MEMORY_MB) : 2048;
+  const cpus = Number(env.SANDBOX_CPUS) > 0 ? Number(env.SANDBOX_CPUS) : 2;
+  return { memoryBytes: Math.round(memoryMb * 1024 * 1024), nanoCpus: Math.round(cpus * 1e9) };
+}
 
 /**
  * Bind-mount sources are resolved by the Docker daemon on the host, but the panel normally runs in a
@@ -60,13 +68,23 @@ export class DockerRuntime implements ContainerRuntime {
     this.image = opts.image ?? process.env.SANDBOX_IMAGE ?? DEFAULT_IMAGE;
   }
 
+  async ping(): Promise<boolean> {
+    try {
+      await this.docker.ping();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private hostPath(path: string): string {
     return toHostPath(path, process.env.DATA_DIR ?? './data', process.env.PI_PANEL_HOST_DATA_DIR);
   }
 
   async createAndStart(spec: ContainerSpec): Promise<string> {
+    const limits = sandboxLimits();
     const container = await this.docker.createContainer({
-      Image: this.image,
+      Image: spec.image ?? this.image,
       Labels: { 'pi-panel.project': String(spec.projectId) },
       HostConfig: {
         Binds: [
@@ -75,7 +93,9 @@ export class DockerRuntime implements ContainerRuntime {
         ],
         // Lets sandboxes reach model servers on the Docker host (llama.cpp, Unsloth) on Linux too.
         ExtraHosts: ['host.docker.internal:host-gateway'],
-        Memory: 2 * 1024 * 1024 * 1024,
+        Memory: limits.memoryBytes,
+        // One runaway build or test loop should not starve the panel and the other projects.
+        NanoCpus: limits.nanoCpus,
         PidsLimit: 512,
         CapDrop: ['ALL'],
         SecurityOpt: ['no-new-privileges'],
@@ -96,6 +116,45 @@ export class DockerRuntime implements ContainerRuntime {
       await this.docker.getContainer(containerId).remove({ force: true });
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return;
+      throw err;
+    }
+  }
+
+  async containerState(containerId: string): Promise<SidecarState['state']> {
+    return (await this.sidecarState(containerId)).state;
+  }
+
+  async start(containerId: string): Promise<void> {
+    try {
+      await this.docker.getContainer(containerId).start();
+    } catch (err) {
+      // 304: already running.
+      if ((err as { statusCode?: number }).statusCode === 304) return;
+      throw err;
+    }
+  }
+
+  /** "sandbox" means the configured sandbox image. */
+  async imageLabels(tag: string): Promise<Record<string, string> | null> {
+    try {
+      const info = await this.docker.getImage(tag === 'sandbox' ? this.image : tag).inspect();
+      return info.Config?.Labels ?? {};
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  baseImage(): string {
+    return this.image;
+  }
+
+  async imageInfo(tag: string): Promise<ImageInfo | null> {
+    try {
+      const info = await this.docker.getImage(tag).inspect();
+      return { id: info.Id, sizeBytes: info.Size, labels: info.Config?.Labels ?? {} };
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return null;
       throw err;
     }
   }

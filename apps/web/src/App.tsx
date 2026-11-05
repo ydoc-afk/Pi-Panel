@@ -22,23 +22,29 @@ import {
 import { useDisclosure } from '@mantine/hooks';
 import {
   IconBrandGithub,
+  IconGitBranch,
   IconFolder,
+  IconInfoCircle,
   IconKey,
+  IconLayoutDashboard,
+  IconLock,
   IconLogout,
   IconPlug,
   IconTerminal2,
   IconUsers,
 } from '@tabler/icons-react';
+import { AccountDialogs, type AccountDialog } from './AccountDialogs.js';
 import { AuthForm } from './AuthForm.js';
 import { ColorControls } from './ColorControls.js';
+import { Dashboard } from './dashboard/Dashboard.js';
+import type { DashboardNav } from './dashboard/widgets.js';
 import { GitHubAccount } from './GitHubAccount.js';
 import { McpServers } from './McpServers.js';
 import { Projects } from './Projects.js';
 import { Providers } from './Providers.js';
 import { Users } from './Users.js';
 import { getStatus, listAccounts, logout, type AuthStatus, type User } from './api.js';
-
-type Tab = 'projects' | 'providers' | 'mcp' | 'github' | 'users';
+import { navigate, useRoute, type Tab } from './router.js';
 
 const SECTIONS = [
   { id: 'workspace', label: 'Workspace' },
@@ -53,6 +59,13 @@ const TABS: {
   adminOnly?: boolean;
   section: 'workspace' | 'admin';
 }[] = [
+  {
+    value: 'dashboard',
+    label: 'Dashboard',
+    hint: 'Activity and health at a glance',
+    icon: IconLayoutDashboard,
+    section: 'workspace',
+  },
   {
     value: 'projects',
     label: 'Projects',
@@ -81,6 +94,14 @@ const TABS: {
     label: 'GitHub',
     hint: 'Account used to clone and push',
     icon: IconBrandGithub,
+    adminOnly: true,
+    section: 'admin',
+  },
+  {
+    value: 'forgejo',
+    label: 'Forgejo',
+    hint: 'Self-hosted git forge',
+    icon: IconGitBranch,
     adminOnly: true,
     section: 'admin',
   },
@@ -121,7 +142,8 @@ function Brand({ size = 'md' }: { size?: 'md' | 'lg' }) {
 
 export function App() {
   const [status, setStatus] = useState<AuthStatus | null>(null);
-  const [tab, setTab] = useState<Tab>('projects');
+  const route = useRoute();
+  const [dialog, setDialog] = useState<AccountDialog>(null);
   const [navOpened, nav] = useDisclosure();
   const [pending, setPending] = useState(0);
 
@@ -132,6 +154,10 @@ export function App() {
   }, []);
 
   const isAdmin = status?.user?.role === 'admin';
+  // A member who follows a link to an admin page lands on the dashboard instead.
+  const tab: Tab = TABS.some((t) => t.value === route.tab && (isAdmin || !t.adminOnly))
+    ? route.tab
+    : 'dashboard';
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -169,8 +195,13 @@ export function App() {
   }
 
   const go = (t: Tab) => {
-    setTab(t);
+    navigate({ tab: t });
     nav.close();
+  };
+
+  const dashboardNav: DashboardNav = {
+    openProject: (projectId, sessionId) => navigate({ tab: 'projects', projectId, sessionId }),
+    goTo: (t) => go(t),
   };
 
   return (
@@ -209,6 +240,19 @@ export function App() {
                     </Text>
                   </Stack>
                 </Group>
+                <Menu.Divider />
+                <Menu.Item
+                  leftSection={<IconLock size={14} />}
+                  onClick={() => setDialog('password')}
+                >
+                  Change password
+                </Menu.Item>
+                <Menu.Item
+                  leftSection={<IconInfoCircle size={14} />}
+                  onClick={() => setDialog('about')}
+                >
+                  About
+                </Menu.Item>
                 <Menu.Divider />
                 <Menu.Item
                   leftSection={<IconLogout size={14} />}
@@ -265,13 +309,20 @@ export function App() {
 
       <AppShell.Main className="pp-main">
         <Container size="xl" px={0}>
-          {tab === 'projects' && <Projects />}
+          {tab === 'dashboard' && (
+            <Dashboard userId={status.user.id} isAdmin={isAdmin} nav={dashboardNav} />
+          )}
+          {tab === 'projects' && (
+            <Projects projectId={route.projectId} sessionId={route.sessionId} />
+          )}
           {tab === 'providers' && <Providers />}
           {tab === 'mcp' && <McpServers />}
           {tab === 'github' && <GitHubAccount />}
+          {tab === 'forgejo' && <GitHubAccount forge="forgejo" />}
           {tab === 'users' && isAdmin && <Users onChange={setPending} />}
         </Container>
       </AppShell.Main>
+      <AccountDialogs open={dialog} onClose={() => setDialog(null)} />
     </AppShell>
   );
 }

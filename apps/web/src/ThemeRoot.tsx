@@ -1,4 +1,5 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { ConfirmHost } from './ConfirmDialog.js';
 import { localStorageColorSchemeManager, MantineProvider } from '@mantine/core';
 import { ACCENTS, DEFAULT_ACCENT, themeFor, type Accent } from './theme.js';
 
@@ -47,6 +48,7 @@ export function ThemeRoot({ children }: { children: ReactNode }) {
         colorSchemeManager={colorSchemeManager}
       >
         {children}
+        <ConfirmHost />
       </MantineProvider>
     </AccentContext.Provider>
   );

@@ -32,6 +32,8 @@ import {
   type ProviderKind,
 } from './api.js';
 import { EmptyState, ErrorText, PageHeader, Tip } from './ui.js';
+import { timeAgo } from './dashboard/charts.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 // Mirrors the server's rule for provider names.
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/;
@@ -311,6 +313,17 @@ export function Providers() {
                           </>
                         )}
                       </Group>
+                      {p.health && (
+                        <Group gap={6} wrap="nowrap" c="red" align="flex-start">
+                          <IconAlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
+                          <Text size="sm" c="red">
+                            {p.health.message}{' '}
+                            <Text span size="xs" c="dimmed">
+                              ({timeAgo(p.health.at)})
+                            </Text>
+                          </Text>
+                        </Group>
+                      )}
                       {p.warning && (
                         <Group gap={6} wrap="nowrap" c="orange">
                           <IconAlertTriangle size={16} style={{ flexShrink: 0 }} />
@@ -344,8 +357,9 @@ export function Providers() {
                           variant="subtle"
                           color="red"
                           onClick={() => {
-                            if (confirm(`Delete provider "${p.name}"?`))
-                              void act(() => deleteProvider(p.id));
+                            void askConfirm(`Delete provider "${p.name}"?`).then((ok) => {
+                              if (ok) void act(() => deleteProvider(p.id));
+                            });
                           }}
                         >
                           Delete

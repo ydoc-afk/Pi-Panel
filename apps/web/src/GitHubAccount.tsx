@@ -7,22 +7,33 @@ import {
   Group,
   List,
   PasswordInput,
+  TextInput,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { IconBrandGithub, IconCircleCheck, IconShieldLock } from '@tabler/icons-react';
+import {
+  IconBrandGithub,
+  IconCircleCheck,
+  IconGitBranch,
+  IconShieldLock,
+} from '@tabler/icons-react';
 import {
   connectGitHub,
   disconnectGitHub,
   getGitHub,
   testGitHub,
+  type Forge,
   type GitHubAccount as Account,
 } from './api.js';
 import { ErrorText, PageHeader, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
-export function GitHubAccount() {
+export function GitHubAccount({ forge = 'github' }: { forge?: Forge }) {
+  const forgejo = forge === 'forgejo';
+  const name = forgejo ? 'Forgejo' : 'GitHub';
   const [account, setAccount] = useState<Account | null>(null);
+  const [baseUrl, setBaseUrl] = useState('http://localhost:3001');
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -32,7 +43,7 @@ export function GitHubAccount() {
   >(null);
 
   useEffect(() => {
-    getGitHub()
+    getGitHub(forge)
       .then(setAccount)
       .catch((e: Error) => setError(e.message));
   }, []);
@@ -42,7 +53,7 @@ export function GitHubAccount() {
     setTesting(true);
     setTestResult(null);
     try {
-      const user = await testGitHub(value);
+      const user = await testGitHub(value, forge, baseUrl.trim());
       setTestResult({ ok: true, login: user.login });
     } catch (err) {
       setTestResult({
@@ -65,7 +76,7 @@ export function GitHubAccount() {
     setBusy(true);
     setError('');
     try {
-      setAccount(await connectGitHub(token));
+      setAccount(await connectGitHub(token, forge, baseUrl.trim()));
       setToken('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong');
@@ -77,9 +88,9 @@ export function GitHubAccount() {
   return (
     <Stack gap="lg">
       <PageHeader
-        icon={IconBrandGithub}
-        title="GitHub"
-        description="One account for cloning, pushing and opening pull requests from projects. The token is stored encrypted."
+        icon={forgejo ? IconGitBranch : IconBrandGithub}
+        title={name}
+        description={`One account for cloning, pushing and opening pull requests from projects. The token is stored encrypted.${forgejo ? ' Run your own with compose/forgejo.' : ''}`}
       />
       <Card padding="xl" maw={640}>
         {account?.connected ? (
@@ -101,13 +112,14 @@ export function GitHubAccount() {
                     </Badge>
                   </Group>
                   <Text size="sm" c="dimmed">
-                    Projects clone, push and open pull requests as this account.
+                    Projects clone, push and open pull requests as this account
+                    {account.baseUrl ? ` on ${account.baseUrl}` : ''}.
                   </Text>
                 </Stack>
               </Group>
             </Group>
             <Group gap="xs">
-              <Tip label="Asks GitHub whether the stored token still works">
+              <Tip label={`Asks ${name} whether the stored token still works`}>
                 <Button size="xs" variant="light" loading={testing} onClick={() => void test()}>
                   Test stored token
                 </Button>
@@ -117,9 +129,12 @@ export function GitHubAccount() {
                 variant="subtle"
                 color="red"
                 onClick={() => {
-                  if (confirm('Disconnect GitHub? Stored token will be deleted.')) {
-                    void disconnectGitHub().then(() => setAccount({ connected: false }));
-                  }
+                  void askConfirm(`Disconnect ${name}? Stored token will be deleted.`).then(
+                    (ok) => {
+                      if (ok)
+                        void disconnectGitHub(forge).then(() => setAccount({ connected: false }));
+                    },
+                  );
                 }}
               >
                 Disconnect
@@ -144,6 +159,14 @@ export function GitHubAccount() {
                   </List>
                 </Stack>
               </Group>
+              {forgejo && (
+                <TextInput
+                  label="Forgejo address"
+                  description="Reachable from the panel. From inside Docker, use http://host.docker.internal:3001 rather than localhost."
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.currentTarget.value)}
+                />
+              )}
               <PasswordInput
                 label="Personal access token"
                 autoComplete="off"

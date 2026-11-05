@@ -36,6 +36,22 @@ describe('cleanReaInput', () => {
     });
   });
 
+  it('accepts Ghidra 12.1.x and refuses other lines named in the URL', () => {
+    const url = (v: string) =>
+      `https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${v}_build/ghidra_${v}_PUBLIC_20260101.zip`;
+    expect(cleanReaInput({ ghidraUrl: url('12.1.4'), ghidraSha256: SHA }).ghidraUrl).toContain(
+      '12.1.4',
+    );
+    expect(cleanReaInput({ ghidraUrl: url('12.1'), ghidraSha256: SHA }).ghidraUrl).toContain(
+      '12.1',
+    );
+    for (const v of ['12.2', '12.0.3', '11.4.2']) {
+      expect(() => cleanReaInput({ ghidraUrl: url(v), ghidraSha256: SHA })).toThrow(
+        /only supports Ghidra 12\.1\.x/,
+      );
+    }
+  });
+
   it('refuses plain http, other schemes and malformed checksums', () => {
     const bad = [
       { ghidraUrl: 'http://example.com/g.zip', ghidraSha256: SHA },

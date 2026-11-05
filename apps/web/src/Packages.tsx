@@ -21,6 +21,7 @@ import {
   type PackageReview,
 } from './api.js';
 import { Collapsible, ErrorText } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const kb = (n: number | null) =>
   n === null ? 'unknown' : n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} kB`;
@@ -181,11 +182,12 @@ export function Packages({ projectId }: { projectId: number }) {
                   color="red"
                   disabled={busy}
                   onClick={() => {
-                    if (confirm(`Remove ${p.source}?`)) {
+                    void askConfirm(`Remove ${p.source}?`).then((ok) => {
+                      if (!ok) return;
                       void run(async () =>
                         applied('Removed', await removePackage(projectId, p.source)),
                       );
-                    }
+                    });
                   }}
                 >
                   Remove

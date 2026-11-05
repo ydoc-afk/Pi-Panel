@@ -17,12 +17,22 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 - The sandbox base image is Node 24: current reference MCP servers require it, pi needs 22.19+, and
   REA needs 22.23.4+.
 
+## Schema changes
+
+The database schema is changed only by numbered migrations in `apps/server/src/db.ts`. Each runs once,
+in a transaction, and is recorded in `schema_migrations`; `/api/health` and the About box show the
+current number. Append new migrations; never edit or reorder ones that have shipped. Older code cannot
+read a newer schema, so rolling back across a migration means restoring the data backup as well.
+
 ## How to move to a newer pi
 
 1. Run the real-pi tests against the new version (see `docs/mcp.md` and `docs/package-lab.md`).
 2. Bump `PI_VERSION`, rebuild the image (`docker compose --profile build-only build sandbox-base`).
-3. Recreate each project's container so it uses the new image. The workspace and pi's agent dir are
-   bind-mounted, so files and pi session history are kept.
+3. Rebuild any runtime images you use (Runtime tab; ones built on the old base are marked), since they
+   are layered on the base image.
+4. Press **Recreate container** on each project so it uses the new image. The workspace and pi's agent
+   dir are bind-mounted, so files and pi session history are kept. The About box (account menu) shows
+   the pi version the sandbox image was built with.
 
 ## What pi-facing surface we use
 
@@ -35,9 +45,9 @@ Pi-Panel depends on pi, so updates are mostly about keeping the two in step.
 
 ## Not built yet
 
-- A panel page showing installed vs latest pi and a one-click rebuild.
-- A `schema_version` migrations table (today new columns are added by a small helper in `db.ts`).
+- A one-click pi rebuild. The About box shows the installed version, but not the latest.
 - Update checks and a diff-aware review (publisher change, new install scripts, new dependencies) for
   packages and MCP servers.
-- A panel update notice. Updating the panel itself is `docker compose pull && docker compose up -d`;
-  keep the data directory and `secret.key` backed up together.
+- A panel update notice. Updating the panel itself is a rebuild from source (images are not published):
+  see [Updating](../README.md#updating) in the README. Keep the data directory and `secret.key` backed
+  up together.

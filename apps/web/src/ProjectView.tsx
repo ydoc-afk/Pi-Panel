@@ -6,6 +6,7 @@ import {
   Button,
   Grid,
   Group,
+  Loader,
   Paper,
   Select,
   Stack,
@@ -17,19 +18,28 @@ import {
 } from '@mantine/core';
 import {
   IconBrandGithub,
+  IconGitBranch,
   IconFlask,
   IconFolder,
   IconPackage,
+  IconPencil,
+  IconPlayerPlay,
   IconPlug,
   IconPlus,
+  IconRefresh,
+  IconStack2,
   IconTerminal2,
   IconX,
 } from '@tabler/icons-react';
 import {
   createSession,
   deleteSession,
+  getProject,
   listProviders,
   listSessions,
+  recreateProject,
+  renameSession,
+  restartProject,
   type Project,
   type Provider,
   type Session,
@@ -38,18 +48,27 @@ import { GitHubPanel } from './GitHubPanel.js';
 import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { ProjectMcp } from './ProjectMcp.js';
+import { Runtimes } from './Runtimes.js';
+import { ProjectStatusBadge } from './ProjectStatusBadge.js';
+import { navigate } from './router.js';
 import { SessionView } from './SessionView.js';
 import { EmptyState, ErrorText, FlatSection, StatusBadge, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
+
+/** How often the session list refreshes, so running/idle badges stay current. */
+const POLL_MS = 3000;
 
 function SessionItem({
   session: s,
   active,
   onSelect,
+  onRename,
   onDelete,
 }: {
   session: Session;
   active: boolean;
   onSelect: () => void;
+  onRename: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -84,8 +103,17 @@ function SessionItem({
             </Stack>
           </Group>
         </UnstyledButton>
-        <Group gap={4} wrap="nowrap" className="pp-above">
+        <Group gap={2} wrap="nowrap" className="pp-above">
           {s.status !== 'idle' && <StatusBadge status={s.status} />}
+          <ActionIcon
+            variant="subtle"
+            color="gray"
+            size="sm"
+            aria-label={`Rename ${s.name}`}
+            onClick={onRename}
+          >
+            <IconPencil size={14} />
+          </ActionIcon>
           <ActionIcon
             variant="subtle"
             color="red"
@@ -101,48 +129,120 @@ function SessionItem({
   );
 }
 
-export function ProjectView({ project, onBack }: { project: Project; onBack: () => void }) {
+export function ProjectView({
+  projectId,
+  sessionId,
+  onBack,
+}: {
+  projectId: number;
+  sessionId?: number;
+  onBack: () => void;
+}) {
+  const [project, setProject] = useState<Project | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [providers, setProviders] = useState<Provider[]>([]);
   const [choice, setChoice] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const select = (id?: number) => navigate({ tab: 'projects', projectId, sessionId: id });
 
   const refresh = () =>
-    listSessions(project.id)
+    listSessions(projectId)
       .then(setSessions)
       .catch((e: Error) => setError(e.message));
 
   useEffect(() => {
+    setProject(null);
+    getProject(projectId)
+      .then(setProject)
+      .catch((e: Error) => setError(e.message));
     void refresh();
     listProviders()
       .then(setProviders)
       .catch((e: Error) => setError(e.message));
-  }, [project.id]);
+    const timer = setInterval(() => {
+      if (!document.hidden) void listSessions(projectId).then(setSessions, () => {});
+    }, POLL_MS);
+    return () => clearInterval(timer);
+  }, [projectId]);
+
+  async function containerAction(action: 'restart' | 'recreate') {
+    if (
+      action === 'recreate' &&
+      !(await askConfirm(
+        "Replace the container with a fresh one from this project's runtime image? Running sessions stop. " +
+          'Workspace files and session history are kept; anything installed elsewhere in the container is not.',
+      ))
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      setProject(await (action === 'restart' ? restartProject : recreateProject)(projectId));
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Container action failed');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function add() {
     try {
       const [providerId, ...rest] = choice.split(':');
       const s = await createSession(
-        project.id,
+        projectId,
         choice ? { providerId: Number(providerId), modelId: rest.join(':') } : undefined,
       );
       await refresh();
-      setSelected(s.id);
+      select(s.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create session');
     }
   }
 
+  async function rename(s: Session) {
+    const name = prompt('Session name', s.name)?.trim();
+    if (!name || name === s.name) return;
+    try {
+      await renameSession(s.id, name);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to rename session');
+    }
+  }
+
   async function remove(s: Session) {
-    if (!confirm(`Delete "${s.name}" and its transcript?`)) return;
+    if (!(await askConfirm(`Delete "${s.name}" and its transcript?`))) return;
     try {
       await deleteSession(s.id);
-      if (selected === s.id) setSelected(null);
+      if (sessionId === s.id) select(undefined);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete session');
     }
+  }
+
+  const crumbs = (
+    <Breadcrumbs separator="/" fz="sm">
+      <Anchor component="button" type="button" onClick={onBack} size="sm">
+        Projects
+      </Anchor>
+      <Text size="sm" c="dimmed">
+        {project?.name ?? '…'}
+      </Text>
+    </Breadcrumbs>
+  );
+
+  if (!project) {
+    return (
+      <Stack gap="lg">
+        {crumbs}
+        {error ? <ErrorText error={error} /> : <Loader size="sm" />}
+      </Stack>
+    );
   }
 
   const modelOptions = providers
@@ -151,34 +251,55 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
       group: p.name,
       items: p.models.map((m) => ({ value: `${p.id}:${m}`, label: m })),
     }));
+  const current = sessions.find((s) => s.id === sessionId);
+  const running = project.status === 'running';
 
   return (
     <Stack gap="lg">
       <Stack gap={6}>
-        <Breadcrumbs separator="/" fz="sm">
-          <Anchor component="button" type="button" onClick={onBack} size="sm">
-            Projects
-          </Anchor>
-          <Text size="sm" c="dimmed">
-            {project.name}
-          </Text>
-        </Breadcrumbs>
-        <Group gap="md" wrap="nowrap">
-          <ThemeIcon variant="light" size={44} radius="md">
-            <IconFolder size={24} stroke={1.6} />
-          </ThemeIcon>
-          <Stack gap={2} style={{ minWidth: 0 }}>
-            <Group gap="sm">
-              <Title order={2} style={{ letterSpacing: '-0.015em' }}>
-                {project.name}
-              </Title>
-              <StatusBadge status={project.status} />
-            </Group>
-            <Text size="sm" c="dimmed">
-              {sessions.length} session{sessions.length === 1 ? '' : 's'}
-              {project.repo ? ` · ${project.repo}` : ''}
-            </Text>
-          </Stack>
+        {crumbs}
+        <Group justify="space-between" wrap="wrap" gap="md">
+          <Group gap="md" wrap="nowrap">
+            <ThemeIcon variant="light" size={44} radius="md">
+              <IconFolder size={24} stroke={1.6} />
+            </ThemeIcon>
+            <Stack gap={2} style={{ minWidth: 0 }}>
+              <Group gap="sm">
+                <Title order={2} style={{ letterSpacing: '-0.015em' }}>
+                  {project.name}
+                </Title>
+                <ProjectStatusBadge status={project.status} />
+              </Group>
+              <Text size="sm" c="dimmed">
+                {sessions.length} session{sessions.length === 1 ? '' : 's'}
+                {project.repo ? ` · ${project.repo}` : ''}
+                {project.runtime !== 'base' ? ` · ${project.runtime} runtime` : ''}
+              </Text>
+            </Stack>
+          </Group>
+          <Group gap="xs">
+            {!running && (
+              <Button
+                size="xs"
+                leftSection={<IconPlayerPlay size={14} />}
+                loading={busy}
+                onClick={() => void containerAction('restart')}
+              >
+                Start container
+              </Button>
+            )}
+            <Tip label="Fresh container from the current sandbox image, e.g. after upgrading pi. Files and history are kept.">
+              <Button
+                size="xs"
+                variant="default"
+                leftSection={<IconRefresh size={14} />}
+                disabled={busy}
+                onClick={() => void containerAction('recreate')}
+              >
+                Recreate container
+              </Button>
+            </Tip>
+          </Group>
         </Group>
       </Stack>
 
@@ -192,6 +313,9 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
           <Tabs.Tab value="github" leftSection={<IconBrandGithub size={16} />}>
             GitHub
           </Tabs.Tab>
+          <Tabs.Tab value="forgejo" leftSection={<IconGitBranch size={16} />}>
+            Forgejo
+          </Tabs.Tab>
           <Tabs.Tab value="mcp" leftSection={<IconPlug size={16} />}>
             MCP
           </Tabs.Tab>
@@ -200,6 +324,9 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
           </Tabs.Tab>
           <Tabs.Tab value="lab" leftSection={<IconFlask size={16} />}>
             Lab
+          </Tabs.Tab>
+          <Tabs.Tab value="runtime" leftSection={<IconStack2 size={16} />}>
+            Runtime
           </Tabs.Tab>
         </Tabs.List>
 
@@ -218,10 +345,17 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
                       data={modelOptions}
                       onChange={(v) => setChoice(v ?? '')}
                     />
-                    <Tip label="Starts pi in this project's container with the chosen model">
+                    <Tip
+                      label={
+                        running
+                          ? "Starts pi in this project's container with the chosen model"
+                          : 'Start the container first'
+                      }
+                    >
                       <Button
                         fullWidth
                         leftSection={<IconPlus size={16} />}
+                        disabled={!running}
                         onClick={() => void add()}
                       >
                         New session
@@ -233,16 +367,17 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
                   <SessionItem
                     key={s.id}
                     session={s}
-                    active={selected === s.id}
-                    onSelect={() => setSelected(s.id)}
+                    active={sessionId === s.id}
+                    onSelect={() => select(s.id)}
+                    onRename={() => void rename(s)}
                     onDelete={() => void remove(s)}
                   />
                 ))}
               </Stack>
             </Grid.Col>
             <Grid.Col span={{ base: 12, md: 8, lg: 9 }}>
-              {selected !== null ? (
-                <SessionView key={selected} sessionId={selected} />
+              {sessionId !== undefined ? (
+                <SessionView key={sessionId} sessionId={sessionId} name={current?.name} />
               ) : (
                 <EmptyState icon={IconTerminal2} title="No session open">
                   {sessions.length > 0
@@ -256,16 +391,27 @@ export function ProjectView({ project, onBack }: { project: Project; onBack: () 
 
         <FlatSection>
           <Tabs.Panel value="github">
-            <GitHubPanel projectId={project.id} />
+            <GitHubPanel projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="forgejo">
+            <GitHubPanel projectId={projectId} forge="forgejo" />
           </Tabs.Panel>
           <Tabs.Panel value="mcp">
-            <ProjectMcp projectId={project.id} />
+            <ProjectMcp projectId={projectId} />
           </Tabs.Panel>
           <Tabs.Panel value="packages">
-            <Packages projectId={project.id} />
+            <Packages projectId={projectId} />
           </Tabs.Panel>
           <Tabs.Panel value="lab">
-            <Lab projectId={project.id} />
+            <Lab projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="runtime">
+            <Runtimes
+              project={project}
+              busy={busy}
+              onChange={setProject}
+              onRecreate={() => void containerAction('recreate')}
+            />
           </Tabs.Panel>
         </FlatSection>
       </Tabs>

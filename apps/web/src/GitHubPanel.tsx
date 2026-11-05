@@ -16,12 +16,14 @@ import {
   getRepoStatus,
   openPullRequest,
   pushBranch,
+  type Forge,
   type GitHubAccount,
   type RepoStatus,
 } from './api.js';
 import { Collapsible, ErrorText } from './ui.js';
 
-export function GitHubPanel({ projectId }: { projectId: number }) {
+export function GitHubPanel({ projectId, forge = 'github' }: { projectId: number; forge?: Forge }) {
+  const name = forge === 'forgejo' ? 'Forgejo' : 'GitHub';
   const [account, setAccount] = useState<GitHubAccount | null>(null);
   const [status, setStatus] = useState<RepoStatus | null>(null);
   const [repo, setRepo] = useState('');
@@ -36,7 +38,7 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
   const [busy, setBusy] = useState(false);
 
   const refresh = () =>
-    Promise.all([getGitHub(), getRepoStatus(projectId)])
+    Promise.all([getGitHub(forge), getRepoStatus(projectId, forge)])
       .then(([a, s]) => {
         setAccount(a);
         setStatus(s);
@@ -63,14 +65,14 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
   const clone = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      await cloneRepo(projectId, repo, cloneBranch.trim() || undefined);
+      await cloneRepo(projectId, repo, cloneBranch.trim() || undefined, forge);
     });
   };
 
   const push = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      const result = await pushBranch(projectId, branch.trim(), message.trim() || undefined);
+      const result = await pushBranch(projectId, branch.trim(), message.trim() || undefined, forge);
       setPushedBranch(result.branch);
       setPrUrl('');
     });
@@ -79,11 +81,11 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
   const openPr = (e: FormEvent) => {
     e.preventDefault();
     void run(async () => {
-      const pr = await openPullRequest(projectId, {
-        head: pushedBranch,
-        title: title.trim(),
-        body: body.trim() || undefined,
-      });
+      const pr = await openPullRequest(
+        projectId,
+        { head: pushedBranch, title: title.trim(), body: body.trim() || undefined },
+        forge,
+      );
       setPrUrl(pr.url);
     });
   };
@@ -93,19 +95,29 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
   }
 
   return (
-    <Collapsible title={`GitHub${status.repo ? `: ${status.repo}` : ''}`}>
+    <Collapsible title={`${name}${status.repo ? `: ${status.repo}` : ''}`}>
       <Stack gap="sm">
         {!account.connected && (
           <Text size="sm" c="dimmed">
-            Connect GitHub in the GitHub tab to push and open pull requests. Public repositories can
-            still be cloned.
+            {forge === 'forgejo'
+              ? 'Connect Forgejo in the Forgejo tab to clone, push and open pull requests.'
+              : 'Connect GitHub in the GitHub tab to push and open pull requests. Public repositories can still be cloned.'}
           </Text>
         )}
-        {!status.repo ? (
+        {status.linkedTo ? (
+          <Text size="sm" c="dimmed">
+            This project is linked to a {status.linkedTo === 'forgejo' ? 'Forgejo' : 'GitHub'}{' '}
+            repository. Use that tab to commit and push.
+          </Text>
+        ) : !status.repo ? (
           <form onSubmit={clone}>
             <Group gap="xs" align="flex-end">
               <TextInput
-                placeholder="owner/name or https://github.com/owner/name"
+                placeholder={
+                  forge === 'forgejo'
+                    ? 'owner/name or the full repository URL'
+                    : 'owner/name or https://github.com/owner/name'
+                }
                 value={repo}
                 onChange={(e) => setRepo(e.currentTarget.value)}
                 w={320}
@@ -125,6 +137,9 @@ export function GitHubPanel({ projectId }: { projectId: number }) {
             <Text size="sm">
               On <Code>{status.branch ?? 'no branch'}</Code> · {status.changes} uncommitted change
               {status.changes === 1 ? '' : 's'}
+              {status.ahead === null
+                ? ''
+                : ` · ${status.ahead} commit${status.ahead === 1 ? '' : 's'} to push`}
             </Text>
             {account.connected && (
               <form onSubmit={push}>

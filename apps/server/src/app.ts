@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
@@ -6,8 +6,11 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import type { DatabaseSync } from 'node:sqlite';
 import { registerAuth } from './auth.js';
-import { openDefaultDb } from './db.js';
+import { registerDashboard } from './dashboard.js';
+import { openDefaultDb, schemaVersion } from './db.js';
+import { registerGuards } from './guards.js';
 import { DockerRuntime } from './docker-runtime.js';
+import type { ForgePusher } from './agent-push.js';
 import { GitHubService, registerGitHub, type GitHubOptions } from './github.js';
 import multipart from '@fastify/multipart';
 import { McpService, registerMcp, type McpOptions } from './mcp.js';
@@ -19,6 +22,7 @@ import { PackageService, registerPackages, type PackageOptions } from './package
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerMcpRegistry } from './mcp-registry.js';
 import { ReaBuilder, ReaBuildError } from './rea-build.js';
+import { RuntimeBuilder, RuntimeBuildError } from './runtimes.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
 import { SessionManager, registerSessions } from './sessions.js';
@@ -32,6 +36,10 @@ export interface AppOptions {
   fetch?: typeof fetch;
   /** Overrides for the GitHub service (tests point it at local repositories). */
   github?: GitHubOptions;
+  /** Overrides for the Forgejo service. */
+  forgejo?: GitHubOptions;
+  /** Replaces the agent's push-to-repository backend (tests). */
+  agentPush?: ForgePusher;
   /** Overrides for package review (tests). */
   packages?: PackageOptions;
   /** Overrides for the package lab (tests). */
@@ -46,27 +54,73 @@ export interface AppOptions {
   webDir?: string;
 }
 
+const PANEL_VERSION = (() => {
+  try {
+    const pkg = new URL('../package.json', import.meta.url);
+    return (JSON.parse(readFileSync(pkg, 'utf8')) as { version?: string }).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+})();
+
 /** PI_PANEL_RUNTIME=fake runs without Docker (UI development, demos). */
 function defaultRuntime(): ContainerRuntime {
   return process.env.PI_PANEL_RUNTIME === 'fake' ? new FakeRuntime() : new DockerRuntime();
 }
 
 export function buildApp(opts: AppOptions = {}) {
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+  const app = Fastify({
+    logger: process.env.NODE_ENV !== 'test',
+    // Behind a reverse proxy every client looks like the proxy; trust X-Forwarded-For to tell them
+    // apart (sign-in throttling is per address). Only enable when the proxy is the sole way in.
+    trustProxy: process.env.TRUST_PROXY === 'true',
+  });
   const db = opts.db ?? openDefaultDb();
   const dataDir = opts.dataDir ?? process.env.DATA_DIR ?? './data';
   const runtime = opts.runtime ?? defaultRuntime();
   const secrets = new Secrets(dataDir);
   const providers = new ProviderStore(db, secrets, opts.fetch);
   const github = new GitHubService(db, secrets, dataDir, { fetch: opts.fetch, ...opts.github });
+  const forgejo = new GitHubService(db, secrets, dataDir, {
+    fetch: opts.fetch,
+    ...opts.forgejo,
+    kind: 'forgejo',
+  });
   const mcpStore = new McpStore(db, secrets);
   const limits = { ...DEFAULT_LIMITS, ...opts.samples };
   const samples = new SamplesService(db, dataDir, limits);
   const sidecars = new SidecarManager(db, mcpStore, runtime, dataDir, opts.sidecars);
-  const sessions = new SessionManager(db, runtime, providers, dataDir, mcpStore, sidecars, samples);
+  const pusher: ForgePusher = opts.agentPush ?? {
+    link(projectId) {
+      const p = db.prepare('SELECT repo, repo_host FROM projects WHERE id = ?').get(projectId) as
+        { repo: string | null; repo_host: string | null } | undefined;
+      if (!p?.repo) return null;
+      return { forge: p.repo_host === 'forgejo' ? 'Forgejo' : 'GitHub', repo: p.repo };
+    },
+    push(projectId, request) {
+      const p = db.prepare('SELECT repo_host FROM projects WHERE id = ?').get(projectId) as
+        { repo_host: string | null } | undefined;
+      return (p?.repo_host === 'forgejo' ? forgejo : github).push(
+        projectId,
+        request.branch,
+        request.message,
+      );
+    },
+  };
+  const sessions = new SessionManager(
+    db,
+    runtime,
+    providers,
+    dataDir,
+    mcpStore,
+    sidecars,
+    samples,
+    pusher,
+  );
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
   const rea = new ReaBuilder(runtime, { dataDir });
+  const runtimes = new RuntimeBuilder(runtime, { dataDir });
   const packages = new PackageService(db, runtime, sessions, dataDir, {
     fetch: opts.fetch,
     ...opts.packages,
@@ -77,6 +131,7 @@ export function buildApp(opts: AppOptions = {}) {
     limits: { fileSize: limits.maxFileBytes, files: 1, fields: 0, parts: 1 },
   });
   app.after(() => {
+    registerGuards(app);
     registerAuth(app, db);
     registerProjects(app, {
       db,
@@ -86,6 +141,7 @@ export function buildApp(opts: AppOptions = {}) {
         sessions.stopProject(id);
         await sidecars.removeProjectSidecars(id);
       },
+      beforeRestart: (id) => sessions.stopProject(id),
       afterRemove: async (id) => {
         await sidecars.removeProjectNetwork(id);
         await samples.removeProject(id);
@@ -93,16 +149,48 @@ export function buildApp(opts: AppOptions = {}) {
     });
     registerProviders(app, providers);
     registerGitHub(app, github);
+    registerGitHub(app, forgejo, 'forgejo');
     registerPackages(app, packages);
     registerLab(app, lab);
     registerMcp(app, mcp);
     registerSamples(app, samples);
     registerMcpRegistry(app, opts.fetch ?? fetch);
     registerSessions(app, sessions);
+    registerDashboard(app, { db, runtime, providers, mcp: mcpStore, github, forgejo });
     // Lets the UI warn before a project is created when the sandbox image has not been built.
     app.get('/api/sandbox', async () => ({
       available: await runtime.hasSandboxImage(),
     }));
+    // Versions for the About box: the panel, its database schema, and the pi in the sandbox image.
+    app.get('/api/system', async () => {
+      const labels = await runtime.imageLabels('sandbox').catch(() => null);
+      return {
+        panelVersion: process.env.PI_PANEL_VERSION || PANEL_VERSION,
+        schema: schemaVersion(db),
+        docker: await runtime.ping().catch(() => false),
+        sandbox: {
+          present: labels !== null,
+          piVersion: labels?.['org.pi-panel.pi-version'] ?? null,
+        },
+      };
+    });
+    // Runtime images projects can choose (Python, Go, ...), built on this machine from the base image.
+    app.get('/api/runtimes', async () => ({ runtimes: await runtimes.list() }));
+    app.post<{ Params: { id: string } }>('/api/runtimes/:id/build', async (req, reply) => {
+      try {
+        await runtimes.start(req.params.id);
+      } catch (err) {
+        if (err instanceof RuntimeBuildError)
+          return reply.code(err.status).send({ error: err.message });
+        throw err;
+      }
+      return reply.code(202).send({ runtimes: await runtimes.list() });
+    });
+    app.get<{ Params: { id: string } }>('/api/runtimes/:id/log', (req, reply) => {
+      const text = runtimes.latestLog(req.params.id);
+      if (text === null) return reply.code(404).send({ error: 'No build has been logged yet' });
+      return reply.type('text/plain; charset=utf-8').send(text);
+    });
     app.get('/api/rea', () => rea.status());
     app.post('/api/rea/build', async (req, reply) => {
       try {
@@ -121,7 +209,18 @@ export function buildApp(opts: AppOptions = {}) {
       return reply.type('text/plain; charset=utf-8').send(text);
     });
   });
-  app.get('/api/health', async () => ({ status: 'ok' }));
+  // Public, so container health checks can use it. The panel is healthy when its database answers;
+  // Docker being unreachable is reported but does not fail the check (the UI still works).
+  app.get('/api/health', async (_req, reply) => {
+    let schema: number;
+    try {
+      schema = schemaVersion(db);
+    } catch {
+      return reply.code(503).send({ status: 'error', db: false });
+    }
+    const docker = await runtime.ping().catch(() => false);
+    return { status: docker ? 'ok' : 'degraded', db: true, docker, schema };
+  });
 
   // Serve the built UI (production image). Unknown non-API paths get index.html so client-side
   // navigation works; /api/* keeps returning JSON errors.

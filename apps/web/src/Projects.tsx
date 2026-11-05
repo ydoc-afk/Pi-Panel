@@ -18,12 +18,23 @@ import {
   IconCalendar,
   IconFolder,
   IconFolderPlus,
+  IconPlayerPlay,
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
 import { ProjectView } from './ProjectView.js';
-import { createProject, deleteProject, getSandbox, listProjects, type Project } from './api.js';
-import { EmptyState, ErrorText, PageHeader, StatusBadge, Tip } from './ui.js';
+import {
+  createProject,
+  deleteProject,
+  getSandbox,
+  listProjects,
+  restartProject,
+  type Project,
+} from './api.js';
+import { ProjectStatusBadge } from './ProjectStatusBadge.js';
+import { navigate } from './router.js';
+import { EmptyState, ErrorText, PageHeader, Tip } from './ui.js';
+import { askConfirm } from './ConfirmDialog.js';
 
 const created = (ms: number) =>
   new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -32,13 +43,16 @@ function ProjectCard({
   project: p,
   busy,
   onOpen,
+  onStart,
   onDelete,
 }: {
   project: Project;
   busy: boolean;
   onOpen: () => void;
+  onStart: () => void;
   onDelete: () => void;
 }) {
+  const startable = p.status === 'stopped' || p.status === 'missing';
   return (
     <Card className="pp-lift" padding="lg">
       <Stack gap="md">
@@ -58,7 +72,20 @@ function ProjectCard({
                   {p.name}
                 </Text>
               </UnstyledButton>
-              <StatusBadge status={p.status} />
+              <Group gap={6} wrap="nowrap" className="pp-above">
+                <ProjectStatusBadge status={p.status} />
+                {startable && (
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    leftSection={<IconPlayerPlay size={12} />}
+                    disabled={busy}
+                    onClick={onStart}
+                  >
+                    Start
+                  </Button>
+                )}
+              </Group>
             </Stack>
           </Group>
           <Tip label="Removes the container and its workspace files">
@@ -93,12 +120,11 @@ function ProjectCard({
   );
 }
 
-export function Projects() {
+export function Projects({ projectId, sessionId }: { projectId?: number; sessionId?: number }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [name, setName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [open, setOpen] = useState<Project | null>(null);
   const [sandboxReady, setSandboxReady] = useState(true);
 
   const refresh = () =>
@@ -107,11 +133,12 @@ export function Projects() {
       .catch((e: Error) => setError(e.message));
 
   useEffect(() => {
+    if (projectId !== undefined) return;
     void refresh();
     getSandbox()
       .then((s) => setSandboxReady(s.available))
       .catch(() => setSandboxReady(true));
-  }, []);
+  }, [projectId]);
 
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
@@ -134,7 +161,15 @@ export function Projects() {
     });
   }
 
-  if (open) return <ProjectView project={open} onBack={() => setOpen(null)} />;
+  if (projectId !== undefined) {
+    return (
+      <ProjectView
+        projectId={projectId}
+        sessionId={sessionId}
+        onBack={() => navigate({ tab: 'projects' })}
+      />
+    );
+  }
 
   return (
     <Stack gap="lg">
@@ -191,10 +226,12 @@ export function Projects() {
               key={p.id}
               project={p}
               busy={busy}
-              onOpen={() => setOpen(p)}
+              onOpen={() => navigate({ tab: 'projects', projectId: p.id })}
+              onStart={() => void run(() => restartProject(p.id))}
               onDelete={() => {
-                if (confirm(`Delete "${p.name}" and its workspace?`))
-                  void run(() => deleteProject(p.id));
+                void askConfirm(`Delete "${p.name}" and its workspace?`).then((ok) => {
+                  if (ok) void run(() => deleteProject(p.id));
+                });
               }}
             />
           ))}

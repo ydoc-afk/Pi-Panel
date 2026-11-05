@@ -2,12 +2,17 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { hash, verify } from '@node-rs/argon2';
+import { FailureThrottle } from './throttle.js';
 
 const COOKIE = 'pp_session';
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MIN_PASSWORD = 12;
 /** Caps open registrations so the public form cannot be used to fill the database. */
 const MAX_PENDING = 50;
+/** Failed sign-ins allowed per address inside the window before further attempts are refused. */
+const LOGIN_FAILURES = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const PURGE_EVERY_MS = 60 * 60 * 1000;
 
 export type Role = 'admin' | 'member';
 export type AccountStatus = 'pending' | 'approved' | 'rejected';
@@ -28,13 +33,15 @@ export interface SessionUser {
  */
 export function memberBlocked(method: string, path: string): boolean {
   if (path.startsWith('/api/admin/')) return true;
-  if (/^\/api\/projects\/[^/]+\/github\/(clone|push|pr)$/.test(path)) return true;
+  if (/^\/api\/projects\/[^/]+\/(github|forgejo)\/(clone|push|pr)$/.test(path)) return true;
   if (method === 'GET' || method === 'HEAD') {
     return path === '/api/mcp/registry' || path === '/api/rea/log';
   }
   return (
     path === '/api/github' ||
     path.startsWith('/api/github/') ||
+    path === '/api/forgejo' ||
+    path.startsWith('/api/forgejo/') ||
     path.startsWith('/api/providers') ||
     path.startsWith('/api/mcp/servers') ||
     path === '/api/mcp/import' ||
@@ -81,8 +88,34 @@ export function routePath(req: FastifyRequest): string {
   }
 }
 
+/** The signed-in, approved user behind a request, or null. */
+export function currentUser(db: DatabaseSync, req: FastifyRequest): SessionUser | null {
+  const token = req.cookies[COOKIE];
+  if (!token) return null;
+  const row = db
+    .prepare(
+      `SELECT u.id, u.username, u.role, u.status, s.expires_at FROM auth_sessions s
+       JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
+    )
+    .get(sha256(token)) as
+    | { id: number; username: string; role: Role; status: AccountStatus; expires_at: number }
+    | undefined;
+  // A session stops working the moment its account is no longer approved.
+  if (!row || row.expires_at < Date.now() || row.status !== 'approved') return null;
+  return { id: row.id, username: row.username, role: row.role };
+}
+
 export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   const secure = process.env.COOKIE_SECURE === 'true';
+  const loginFailures = new FailureThrottle(LOGIN_FAILURES, LOGIN_WINDOW_MS);
+
+  // Expired sign-ins are refused anyway; this just keeps the table from growing forever.
+  const purgeExpired = () =>
+    db.prepare('DELETE FROM auth_sessions WHERE expires_at < ?').run(Date.now());
+  purgeExpired();
+  const purgeTimer = setInterval(purgeExpired, PURGE_EVERY_MS);
+  purgeTimer.unref();
+  app.addHook('onClose', async () => clearInterval(purgeTimer));
 
   const userCount = () => (db.prepare('SELECT COUNT(*) AS n FROM users').get() as { n: number }).n;
 
@@ -103,25 +136,9 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     });
   }
 
-  function currentUser(req: FastifyRequest): SessionUser | null {
-    const token = req.cookies[COOKIE];
-    if (!token) return null;
-    const row = db
-      .prepare(
-        `SELECT u.id, u.username, u.role, u.status, s.expires_at FROM auth_sessions s
-         JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
-      )
-      .get(sha256(token)) as
-      | { id: number; username: string; role: Role; status: AccountStatus; expires_at: number }
-      | undefined;
-    // A session stops working the moment its account is no longer approved.
-    if (!row || row.expires_at < Date.now() || row.status !== 'approved') return null;
-    return { id: row.id, username: row.username, role: row.role };
-  }
-
   app.get('/api/auth/status', async (req) => ({
     setupRequired: userCount() === 0,
-    user: currentUser(req),
+    user: currentUser(db, req),
   }));
 
   app.post('/api/auth/setup', async (req, reply) => {
@@ -175,13 +192,24 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   app.post('/api/auth/login', async (req, reply) => {
     const creds = parseCredentials(req.body);
     if (!creds) return reply.code(400).send({ error: 'Username and password required' });
+    const wait = loginFailures.retryAfter(req.ip);
+    if (wait > 0) {
+      return reply
+        .code(429)
+        .header('retry-after', String(wait))
+        .send({ error: `Too many failed sign-ins. Try again in ${Math.ceil(wait / 60)} min.` });
+    }
     const row = db
       .prepare('SELECT id, username, password_hash, role, status FROM users WHERE username = ?')
       .get(creds.username) as
       | { id: number; username: string; password_hash: string; role: Role; status: AccountStatus }
       | undefined;
     const ok = row ? await verify(row.password_hash, creds.password) : false;
-    if (!row || !ok) return reply.code(401).send({ error: 'Invalid username or password' });
+    if (!row || !ok) {
+      loginFailures.fail(req.ip);
+      return reply.code(401).send({ error: 'Invalid username or password' });
+    }
+    loginFailures.reset(req.ip);
     // The status is only revealed to someone who knows the password.
     if (row.status === 'pending') {
       return reply.code(403).send({ error: 'Your account is waiting for the admin to approve it' });
@@ -193,6 +221,40 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     return { user: { id: row.id, username: row.username, role: row.role } };
   });
 
+  // Changing your password signs out every other browser that is signed in as you.
+  app.post('/api/auth/password', async (req, reply) => {
+    const user = currentUser(db, req);
+    if (!user) return reply.code(401).send({ error: 'Authentication required' });
+    const { current, next } = (req.body ?? {}) as { current?: unknown; next?: unknown };
+    if (typeof current !== 'string' || typeof next !== 'string') {
+      return reply.code(400).send({ error: 'current and next passwords are required' });
+    }
+    if (next.length < MIN_PASSWORD) {
+      return reply
+        .code(400)
+        .send({ error: `Password must be at least ${MIN_PASSWORD} characters` });
+    }
+    const wait = loginFailures.retryAfter(req.ip);
+    if (wait > 0) {
+      return reply
+        .code(429)
+        .header('retry-after', String(wait))
+        .send({ error: 'Too many failed attempts. Try again later.' });
+    }
+    const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id) as
+      { password_hash: string } | undefined;
+    if (!row || !(await verify(row.password_hash, current))) {
+      loginFailures.fail(req.ip);
+      return reply.code(403).send({ error: 'Current password is wrong' });
+    }
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hash(next), user.id);
+    const mine = sha256(req.cookies[COOKIE] ?? '');
+    const ended = db
+      .prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?')
+      .run(user.id, mine).changes;
+    return { ok: true, signedOutOthers: Number(ended) };
+  });
+
   app.post('/api/auth/logout', async (req, reply) => {
     const token = req.cookies[COOKIE];
     if (token) db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(sha256(token));
@@ -201,7 +263,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
   });
 
   const adminOnly = (req: FastifyRequest, reply: FastifyReply) => {
-    if (currentUser(req)?.role !== 'admin') {
+    if (currentUser(db, req)?.role !== 'admin') {
       reply.code(403).send({ error: 'Admin only' });
       return false;
     }
@@ -256,7 +318,7 @@ export function registerAuth(app: FastifyInstance, db: DatabaseSync) {
     const path = routePath(req);
     if (!path.startsWith('/api/') || path === '/api/health' || path.startsWith('/api/auth/'))
       return;
-    const user = currentUser(req);
+    const user = currentUser(db, req);
     if (!user) return reply.code(401).send({ error: 'Authentication required' });
     if (user.role !== 'admin' && memberBlocked(req.method, path)) {
       return reply.code(403).send({ error: 'Only the admin can do that' });

@@ -18,8 +18,9 @@ a test.
 
 ## Setup
 
-1. Pick a Ghidra release from <https://github.com/NationalSecurityAgency/ghidra/releases>, copy the
-   zip's download URL, and compute its checksum with `sha256sum`. The image build requires both and
+1. Pick a **Ghidra 12.1.x** release (12.1.4 is the one REA 6.8.0 is verified with; 12.2 and 12.0 are
+   rejected and leave the Ghidra provider "unavailable") from
+   <https://github.com/NationalSecurityAgency/ghidra/releases>, copy the zip's download URL, and compute its checksum with `sha256sum`. The image build requires both and
    refuses to build without them, so nothing is downloaded unverified.
 2. Build the image on the Docker host. The easiest route is the **Build REA** card at the top of the MCP
    tab: paste the Ghidra download link and the checksum, then press **Build REA image**. The panel builds

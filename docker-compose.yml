@@ -10,6 +10,12 @@ services:
       # The Docker daemon resolves bind-mount paths on the host, so it must know where /data lives there.
       # Run `docker compose up` from the repository root so ${PWD}/data is the directory mounted below.
       PI_PANEL_HOST_DATA_DIR: ${PWD}/data
+      # Behind a reverse proxy (Caddy, Tailscale Serve, ...), set to 'true' so sign-in throttling sees
+      # real client addresses. Only do this when the proxy is the only way to reach the panel.
+      TRUST_PROXY: ${PI_PANEL_TRUST_PROXY:-false}
+      # Per-project sandbox limits.
+      SANDBOX_MEMORY_MB: ${PI_PANEL_SANDBOX_MEMORY_MB:-2048}
+      SANDBOX_CPUS: ${PI_PANEL_SANDBOX_CPUS:-2}
     volumes:
       - ./data:/data
       # The backend is the only component that talks to Docker (project sandboxes).
@@ -31,4 +37,42 @@ services:
         GHIDRA_URL: ${GHIDRA_URL:-}
         GHIDRA_SHA256: ${GHIDRA_SHA256:-}
     image: pi-panel/rea:6.8.0
+    profiles: ['build-only']
+
+  # Runtime variants of the sandbox image (Python, Go, ...). Optional; projects pick one in their
+  # Runtime tab, which can also build them. Build the sandbox-base image first.
+  sandbox-python:
+    build:
+      context: ./docker/runtimes/python
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-python:latest
+    profiles: ['build-only']
+  sandbox-build:
+    build:
+      context: ./docker/runtimes/build
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-build:latest
+    profiles: ['build-only']
+  sandbox-go:
+    build:
+      context: ./docker/runtimes/go
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-go:latest
+    profiles: ['build-only']
+  sandbox-rust:
+    build:
+      context: ./docker/runtimes/rust
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-rust:latest
+    profiles: ['build-only']
+  sandbox-jvm:
+    build:
+      context: ./docker/runtimes/jvm
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-jvm:latest
     profiles: ['build-only']

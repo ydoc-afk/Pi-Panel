@@ -88,29 +88,143 @@ CREATE TABLE IF NOT EXISTS session_events (
 );
 `;
 
+/**
+ * Ordered schema changes. Each runs once, inside a transaction, and its number is recorded in
+ * schema_migrations. Append new steps; never edit or reorder ones that have shipped.
+ */
+const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => void }[] = [
+  {
+    // Databases from before the migrations table may be missing columns that CREATE TABLE IF NOT
+    // EXISTS skipped. Accounts that predate registration are the admin, so they default to approved.
+    version: 1,
+    name: 'columns added before migrations existed',
+    up: (db) => {
+      addMissingColumns(db, 'users', {
+        role: "TEXT NOT NULL DEFAULT 'admin'",
+        status: "TEXT NOT NULL DEFAULT 'approved'",
+      });
+      addMissingColumns(db, 'projects', { repo: 'TEXT' });
+      addMissingColumns(db, 'mcp_servers', {
+        image: 'TEXT',
+        port: 'INTEGER',
+        ready_log: 'TEXT',
+        mount_samples: 'INTEGER NOT NULL DEFAULT 0',
+        memory_mb: 'INTEGER',
+      });
+      addMissingColumns(db, 'project_mcp', { container_id: 'TEXT' });
+      addMissingColumns(db, 'sessions', {
+        provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
+        model_id: 'TEXT',
+      });
+    },
+  },
+  {
+    version: 2,
+    name: 'index sign-in sessions by expiry for purging',
+    up: (db) =>
+      db.exec('CREATE INDEX IF NOT EXISTS auth_sessions_expires ON auth_sessions (expires_at)'),
+  },
+  {
+    // When each event was recorded, for the dashboard's activity charts. Older rows stay NULL.
+    // Idempotent, because stable panels added this column before they had migrations.
+    version: 3,
+    name: 'record when session events were stored',
+    up: (db) => {
+      addMissingColumns(db, 'session_events', { created_at: 'INTEGER' });
+      db.exec('CREATE INDEX IF NOT EXISTS session_events_created ON session_events (created_at)');
+    },
+  },
+  {
+    // A Forgejo account (its own instance URL plus an encrypted token), and which forge a project's
+    // linked repository lives on. NULL means GitHub, as before.
+    version: 4,
+    name: 'forgejo account and project repository host',
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS forgejo_account (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        base_url TEXT NOT NULL,
+        login TEXT NOT NULL,
+        user_id INTEGER NOT NULL,
+        token_enc TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`);
+      addMissingColumns(db, 'projects', { repo_host: 'TEXT' });
+    },
+  },
+  {
+    // The last model-call failure per provider (cleared by the next success), so a rejected key
+    // shows on the Providers page and the dashboard and not only inside one session's transcript.
+    version: 5,
+    name: 'last model-call failure per provider',
+    up: (db) =>
+      addMissingColumns(db, 'providers', {
+        last_error: 'TEXT',
+        last_error_status: 'INTEGER',
+        last_error_at: 'INTEGER',
+      }),
+  },
+  {
+    // Which runtime image a project runs in (see runtimes.ts). applied_runtime is what the current
+    // container was made from, so the UI can say a change waits for Recreate. Existing containers
+    // were all made from the base image.
+    version: 6,
+    name: 'project runtime image',
+    up: (db) =>
+      addMissingColumns(db, 'projects', {
+        runtime: "TEXT NOT NULL DEFAULT 'base'",
+        applied_runtime: "TEXT NOT NULL DEFAULT 'base'",
+      }),
+  },
+];
+
 export function openDb(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA foreign_keys = ON');
+  // WAL lets readers (the UI polling) run while a session is writing events; the busy timeout
+  // waits out a brief lock instead of failing the request.
+  db.exec('PRAGMA journal_mode = WAL');
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
-  // Accounts that exist before registration was added are the admin, so they default to approved.
-  addMissingColumns(db, 'users', {
-    role: "TEXT NOT NULL DEFAULT 'admin'",
-    status: "TEXT NOT NULL DEFAULT 'approved'",
-  });
-  addMissingColumns(db, 'projects', { repo: 'TEXT' });
-  addMissingColumns(db, 'mcp_servers', {
-    image: 'TEXT',
-    port: 'INTEGER',
-    ready_log: 'TEXT',
-    mount_samples: 'INTEGER NOT NULL DEFAULT 0',
-    memory_mb: 'INTEGER',
-  });
-  addMissingColumns(db, 'project_mcp', { container_id: 'TEXT' });
-  addMissingColumns(db, 'sessions', {
-    provider_id: 'INTEGER REFERENCES providers(id) ON DELETE SET NULL',
-    model_id: 'TEXT',
-  });
+  migrate(db);
   return db;
+}
+
+function migrate(db: DatabaseSync) {
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at INTEGER NOT NULL
+  )`);
+  const done = new Set(
+    (
+      db.prepare('SELECT version FROM schema_migrations').all() as unknown as { version: number }[]
+    ).map((r) => r.version),
+  );
+  for (const m of MIGRATIONS) {
+    if (done.has(m.version)) continue;
+    db.exec('BEGIN');
+    try {
+      m.up(db);
+      db.prepare('INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)').run(
+        m.version,
+        m.name,
+        Date.now(),
+      );
+      db.exec('COMMIT');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
+
+/** The newest migration applied to this database. */
+export function schemaVersion(db: DatabaseSync): number {
+  return (
+    db.prepare('SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations').get() as {
+      v: number;
+    }
+  ).v;
 }
 
 export function openDefaultDb(): DatabaseSync {
@@ -119,7 +233,7 @@ export function openDefaultDb(): DatabaseSync {
   return openDb(join(dir, 'pi-panel.db'));
 }
 
-/** Upgrades databases created before a column existed (CREATE TABLE IF NOT EXISTS skips them). */
+/** Adds columns a table is missing; used by migration 1 for databases older than the migrations table. */
 function addMissingColumns(db: DatabaseSync, table: string, columns: Record<string, string>) {
   const have = new Set(
     (db.prepare(`PRAGMA table_info(${table})`).all() as unknown as { name: string }[]).map(

@@ -1,7 +1,16 @@
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { agentNote } from './agent-note.js';
+import { runtimeNote } from './runtimes.js';
+import {
+  PUSH_DIALOG_TITLE,
+  describePush,
+  parsePushRequest,
+  type ForgePusher,
+  type PushRequest,
+} from './agent-push.js';
 import { SANDBOX_AGENT_DIR, agentDir } from './paths.js';
 import type { McpStore } from './mcp-store.js';
 import type { SamplesService } from './samples.js';
@@ -38,6 +47,11 @@ export interface StreamMessage {
 /** High-volume events that are streamed live but not persisted; message_end carries the final text. */
 const EPHEMERAL = new Set(['message_update', 'tool_execution_update']);
 const REPLAY_LIMIT = 1000;
+const FORGE_EXTENSION = new URL('../assets/panel-forge.js', import.meta.url);
+/** Extension UI calls that block pi until the client answers. */
+const UI_DIALOGS = new Set(['select', 'confirm', 'input', 'editor']);
+/** Grace after a dialog's own timeout before the panel stops offering it. */
+const UI_TIMEOUT_GRACE_MS = 1000;
 
 export const sessionDto = (r: SessionRow) => ({
   id: r.id,
@@ -49,10 +63,22 @@ export const sessionDto = (r: SessionRow) => ({
   createdAt: r.created_at,
 });
 
+/** A dialog waiting for the user; push is set for the reserved push-to-repository confirmation. */
+interface PendingUi {
+  timer: ReturnType<typeof setTimeout> | null;
+  push?: PushRequest;
+  /** A push is running, so a second answer must not start another. */
+  busy?: boolean;
+}
+
 export class SessionManager {
   private live = new Map<number, RpcClient>();
   private starting = new Map<number, Promise<RpcClient>>();
   private intentionalStops = new Set<RpcClient>();
+  /** Extension dialogs waiting for an answer, per session, with the timer that retires them. */
+  private readonly uiPending = new Map<number, Map<string, PendingUi>>();
+  /** What each status and widget currently shows, so repeats and clears of nothing are dropped. */
+  private readonly uiShown = new Map<number, Map<string, string>>();
   private listeners = new Map<number, Set<(m: StreamMessage) => void>>();
   private seqs = new Map<number, number>();
   /** Sessions whose pi process should be replaced as soon as their current run settles. */
@@ -66,6 +92,7 @@ export class SessionManager {
     private readonly mcp: McpStore,
     private readonly sidecars: SidecarManager,
     private readonly samples: SamplesService,
+    private readonly pusher?: ForgePusher,
   ) {
     // No pi process survives a panel restart, so nothing can still be running.
     db.prepare("UPDATE sessions SET status = 'idle' WHERE status = 'running'").run();
@@ -212,12 +239,26 @@ export class SessionManager {
     return { stopped, running };
   }
 
+  rename(id: number, name: string) {
+    this.row(id);
+    this.db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run(name, id);
+    return this.row(id);
+  }
+
   delete(id: number) {
     this.row(id);
     this.stop(id);
+    this.forgetUi(id);
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id);
     this.listeners.delete(id);
     this.seqs.delete(id);
+  }
+
+  /** Drops dialog timers and shown-state without recording anything: the session is going away. */
+  private forgetUi(id: number) {
+    for (const { timer } of this.uiPending.get(id)?.values() ?? []) if (timer) clearTimeout(timer);
+    this.uiPending.delete(id);
+    this.uiShown.delete(id);
   }
 
   private stopClient(id: number, client: RpcClient) {
@@ -285,6 +326,8 @@ export class SessionManager {
     }
     client.onClose((code, stderr) => this.handleClose(id, client, code, stderr));
     this.live.set(id, client);
+    // A new pi process starts with no statuses or widgets; tell the views to forget the old ones.
+    this.record(id, { type: 'panel_ui_reset' });
     try {
       const state = await client.request({ type: 'get_state' });
       if (!state.success) throw new Error(state.error);
@@ -323,11 +366,41 @@ export class SessionManager {
     // Always written, even when empty, so servers removed in the panel do not linger in the file.
     const mcp = this.mcp.projectConfig(projectId, { samples: this.samples.names(projectId) });
     await write('mcp.json', mcp.config);
+    // AGENTS.md in the agent dir is pi's global context. Removed when the project has no repository,
+    // so unlinking one does not leave stale instructions behind.
+    const link = this.db
+      .prepare('SELECT repo, repo_host, applied_runtime FROM projects WHERE id = ?')
+      .get(projectId) as
+      { repo: string | null; repo_host: string | null; applied_runtime: string } | undefined;
+    const note = agentNote(
+      link?.repo ?? null,
+      link?.repo_host ?? null,
+      // The container's runtime, not the one chosen for the next recreate.
+      link ? runtimeNote(link.applied_runtime) : null,
+    );
+    const extension = join(dir, 'extensions', 'panel-forge.js');
+    if (note) {
+      const tmp = join(dir, 'AGENTS.md.tmp');
+      await writeFile(tmp, note, { mode: 0o644 });
+      await rename(tmp, join(dir, 'AGENTS.md'));
+    } else {
+      await rm(join(dir, 'AGENTS.md'), { force: true });
+    }
+    if (link?.repo) {
+      // The push tool the note refers to: installed only where there is a repository to push to.
+      await mkdir(join(dir, 'extensions'), { recursive: true });
+      await writeFile(extension, await readFile(FORGE_EXTENSION), { mode: 0o644 });
+    } else {
+      await rm(extension, { force: true });
+    }
     return mcp;
   }
 
   private handleClose(id: number, client: RpcClient, code: number | null, stderr: string) {
-    if (this.live.get(id) === client) this.live.delete(id);
+    if (this.live.get(id) === client) {
+      this.live.delete(id);
+      this.clearUi(id);
+    }
     if (this.intentionalStops.delete(client)) return;
     const wasRunning = this.db.prepare('SELECT status FROM sessions WHERE id = ?').get(id) as
       { status: string } | undefined;
@@ -351,13 +424,207 @@ export class SessionManager {
     return seq;
   }
 
+  /**
+   * A failed model call ends the assistant message with stopReason "error". Remember it on the
+   * provider so the Providers page and dashboard show it, and say so in this session too. A
+   * finished call clears the mark. Aborts are the user's own doing, not a provider fault.
+   */
+  private trackProviderHealth(id: number, event: PiEvent) {
+    const msg = event.message as
+      { role?: string; stopReason?: string; errorMessage?: string } | undefined;
+    if (msg?.role !== 'assistant') return;
+    const row = this.db.prepare('SELECT provider_id FROM sessions WHERE id = ?').get(id) as
+      { provider_id: number | null } | undefined;
+    if (!row?.provider_id) return;
+    if (msg.stopReason === 'error' || msg.errorMessage) {
+      const health = this.providers.recordFailure(row.provider_id, msg.errorMessage ?? '');
+      this.record(id, {
+        type: 'panel_notice',
+        level: 'error',
+        message: `Model provider error: ${health.message}`,
+      });
+    } else if (msg.stopReason !== 'aborted') {
+      this.providers.clearFailure(row.provider_id);
+    }
+  }
+
+  /**
+   * Decides whether an extension UI request is worth recording. Extensions re-send the same status or
+   * clear a widget that is not showing many times a minute (one session logged over a thousand of
+   * each), so only changes are kept. Dialogs are remembered until answered, timed out or abandoned.
+   */
+  private acceptUi(id: number, event: PiEvent): boolean {
+    const method = event.method;
+    if (typeof method !== 'string') return true;
+    let key: string | undefined;
+    let value: string | null = null;
+    if (method === 'setStatus' && typeof event.statusKey === 'string') {
+      key = `status:${event.statusKey}`;
+      value = typeof event.statusText === 'string' ? event.statusText : null;
+    } else if (method === 'setWidget' && typeof event.widgetKey === 'string') {
+      key = `widget:${event.widgetKey}`;
+      value = Array.isArray(event.widgetLines)
+        ? JSON.stringify([event.widgetLines, event.widgetPlacement ?? 'aboveEditor'])
+        : null;
+    }
+    if (key !== undefined) {
+      let shown = this.uiShown.get(id);
+      if (!shown) this.uiShown.set(id, (shown = new Map()));
+      if ((shown.get(key) ?? null) === value) return false;
+      if (value === null) shown.delete(key);
+      else shown.set(key, value);
+      return true;
+    }
+    let push: PushRequest | undefined;
+    if (method === 'input' && event.title === PUSH_DIALOG_TITLE && typeof event.id === 'string') {
+      push = this.acceptPush(id, event);
+      if (!push) return false; // answered (refused) without bothering the user
+    }
+    if (UI_DIALOGS.has(method) && typeof event.id === 'string') {
+      let pending = this.uiPending.get(id);
+      if (!pending) this.uiPending.set(id, (pending = new Map()));
+      const requestId = event.id;
+      const ms = typeof event.timeout === 'number' && event.timeout > 0 ? event.timeout : 0;
+      pending.set(requestId, {
+        timer: ms
+          ? setTimeout(() => this.retireUi(id, requestId, 'timeout'), ms + UI_TIMEOUT_GRACE_MS)
+          : null,
+        ...(push ? { push } : {}),
+      });
+    }
+    return true;
+  }
+
+  private retireUi(id: number, requestId: string, reason: 'answered' | 'timeout' | 'closed') {
+    const pending = this.uiPending.get(id);
+    if (!pending?.has(requestId)) return false;
+    const timer = pending.get(requestId)?.timer;
+    if (timer) clearTimeout(timer);
+    pending.delete(requestId);
+    if (pending.size === 0) this.uiPending.delete(id);
+    this.record(id, { type: 'panel_ui_resolved', id: requestId, reason });
+    return true;
+  }
+
+  /**
+   * An agent's push_to_repo tool asked for a push. Turn its dialog into a confirmation written by the
+   * panel (the agent's own words never reach the user as the question), or answer it right away when
+   * there is nothing to confirm: no linked repository, or a malformed request.
+   */
+  private acceptPush(id: number, event: PiEvent): PushRequest | undefined {
+    const refuse = (error: string) => {
+      try {
+        this.live.get(id)?.send({
+          type: 'extension_ui_response',
+          id: event.id,
+          value: JSON.stringify({ ok: false, error }),
+        });
+      } catch {
+        // pi is gone; nothing is waiting.
+      }
+      return undefined;
+    };
+    const request = parsePushRequest(event.placeholder);
+    if (!request) return refuse('The push request was malformed.');
+    const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as
+      { project_id: number } | undefined;
+    const link = row ? this.pusher?.link(row.project_id) : null;
+    if (!link) return refuse('This project is not linked to a GitHub or Forgejo repository.');
+    // What the user sees: the panel's wording, shown as a plain yes/no question.
+    event.method = 'confirm';
+    event.title = `Push to ${link.forge}?`;
+    event.message = describePush(link.forge, link.repo, request);
+    delete event.placeholder;
+    return request;
+  }
+
+  /** Runs an approved push from the host and reports the outcome as the agent will read it. */
+  private async runPush(sessionId: number, request: PushRequest): Promise<string> {
+    const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(sessionId) as
+      { project_id: number } | undefined;
+    if (!row || !this.pusher)
+      return JSON.stringify({ ok: false, error: 'Pushing is unavailable.' });
+    try {
+      return JSON.stringify({ ok: true, ...(await this.pusher.push(row.project_id, request)) });
+    } catch (err) {
+      return JSON.stringify({
+        ok: false,
+        error: err instanceof Error ? err.message : 'Push failed',
+      });
+    }
+  }
+
+  /** Delivers the user's answer to an extension dialog. */
+  async respondUi(
+    id: number,
+    body: { id?: unknown; value?: unknown; confirmed?: unknown; cancelled?: unknown },
+  ) {
+    this.row(id);
+    const requestId = body.id;
+    if (typeof requestId !== 'string' || !requestId || requestId.length > 200) {
+      throw new SessionError(400, 'id must be the request id');
+    }
+    const answers = [body.value, body.confirmed, body.cancelled].filter((v) => v !== undefined);
+    if (answers.length !== 1) {
+      throw new SessionError(400, 'Send exactly one of value, confirmed or cancelled');
+    }
+    let answer: Record<string, unknown>;
+    if (typeof body.value === 'string' && body.value.length <= 100_000)
+      answer = { value: body.value };
+    else if (typeof body.confirmed === 'boolean') answer = { confirmed: body.confirmed };
+    else if (body.cancelled === true) answer = { cancelled: true };
+    else throw new SessionError(400, 'value must be a string, confirmed a boolean, cancelled true');
+    const client = this.live.get(id);
+    const entry = this.uiPending.get(id)?.get(requestId);
+    if (!client || !entry || entry.busy) {
+      throw new SessionError(409, 'That question is no longer waiting for an answer');
+    }
+    if (entry.push) {
+      // Only yes or no is meaningful here; the outcome of an approved push goes back to the agent.
+      if (typeof body.confirmed !== 'boolean' && body.cancelled !== true) {
+        throw new SessionError(400, 'Answer with confirmed or cancelled');
+      }
+      if (body.confirmed === true) {
+        entry.busy = true;
+        answer = { value: await this.runPush(id, entry.push) };
+      } else {
+        answer = { cancelled: true };
+      }
+    }
+    try {
+      client.send({ type: 'extension_ui_response', id: requestId, ...answer });
+    } catch {
+      this.retireUi(id, requestId, 'closed');
+      throw new SessionError(502, 'pi is not running');
+    }
+    this.retireUi(id, requestId, 'answered');
+  }
+
+  /** The pi process is gone: nothing is waiting on its dialogs and its statuses no longer apply. */
+  private clearUi(id: number) {
+    for (const requestId of [...(this.uiPending.get(id)?.keys() ?? [])]) {
+      this.retireUi(id, requestId, 'closed');
+    }
+    this.uiShown.delete(id);
+  }
+
   private record(id: number, event: PiEvent) {
+    if (event.type === 'extension_ui_request' && !this.acceptUi(id, event)) return;
     const seq = this.nextSeq(id);
     if (!EPHEMERAL.has(event.type)) {
-      this.db
-        .prepare('INSERT INTO session_events (session_id, seq, data) VALUES (?, ?, ?)')
-        .run(id, seq, JSON.stringify(event));
+      try {
+        this.db
+          .prepare(
+            'INSERT INTO session_events (session_id, seq, data, created_at) VALUES (?, ?, ?, ?)',
+          )
+          .run(id, seq, JSON.stringify(event), Date.now());
+      } catch (err) {
+        // The session was deleted while pi was still emitting (or a timer fired): nothing to keep.
+        if ((err as { errcode?: number }).errcode === 787) return;
+        throw err;
+      }
     }
+    if (event.type === 'message_end') this.trackProviderHealth(id, event);
     if (event.type === 'agent_start') this.setStatus(id, 'running');
     else if (event.type === 'agent_settled') this.setStatus(id, 'idle');
     for (const send of this.listeners.get(id) ?? []) send({ seq, event });
@@ -413,6 +680,17 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
     handle(reply, () => ({ session: sessionDto(manager.row(num(req.params.id))) })),
   );
 
+  app.patch<{ Params: { id: string } }>('/api/sessions/:id', (req, reply) =>
+    handle(reply, () => {
+      const { name } = (req.body ?? {}) as { name?: unknown };
+      const clean = typeof name === 'string' ? name.trim() : '';
+      if (!clean || clean.length > 80) {
+        return reply.code(400).send({ error: 'Name must be 1-80 characters' });
+      }
+      return { session: sessionDto(manager.rename(num(req.params.id), clean)) };
+    }),
+  );
+
   app.delete<{ Params: { id: string } }>('/api/sessions/:id', (req, reply) =>
     handle(reply, () => {
       manager.delete(num(req.params.id));
@@ -451,6 +729,13 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/abort', (req, reply) =>
     handle(reply, async () => {
       await manager.abort(num(req.params.id));
+      return { ok: true };
+    }),
+  );
+
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/ui-response', (req, reply) =>
+    handle(reply, async () => {
+      await manager.respondUi(num(req.params.id), (req.body ?? {}) as Record<string, unknown>);
       return { ok: true };
     }),
   );

@@ -11,14 +11,26 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
 
 ## What it does
 
+- **Dashboard.** The home page: prompts, tool calls and failures per day for two weeks, the latest
+  sessions, sessions by model, the most-called tools, every project at a glance, and a health check of
+  the sandbox image, providers, GitHub, MCP servers and pending accounts. It refreshes every 30 seconds.
+  _Customize_ lets you drag widgets on a snap-to-grid layout, resize them, remove them and add them back;
+  each person's arrangement is saved in their browser. Activity is counted from events recorded by this
+  version on; prompts from older sessions are counted by their message time, their tool calls are not.
 - **Projects and sessions.** One container per project with a bind-mounted workspace; pi runs inside it.
-  Sessions stream live over WebSocket, persist their transcript, and resume.
+  Sessions stream live over WebSocket, persist their transcript, and resume. The terminal shows each
+  tool call with its command and output, takes multi-line prompts, lets you steer or queue a follow-up
+  while pi works, and exports the transcript as Markdown. A stopped or missing container is detected and
+  can be started again, and **Recreate container** moves a project to a rebuilt sandbox image without
+  losing files or history.
 - **Providers.** Anthropic, OpenAI, and any OpenAI-compatible server (llama.cpp, Unsloth Studio, ...).
   Keys are encrypted at rest. _Test connection_ checks a provider's settings before you save them, and
   model lists are discovered from the provider.
 - **GitHub.** Clone, commit, push and open pull requests with a personal access token. _Test token_ checks
   a token against GitHub before you connect it. Git runs in the panel, never in the sandbox, and the token
   never enters a container.
+- **Forgejo.** The same clone, commit, push and pull-request flow against a self-hosted Forgejo instance (see
+  `compose/forgejo` to run one locally). See [docs/forgejo-integration.md](docs/forgejo-integration.md).
 - **Pi packages.** Install npm pi packages per project, with an enforced review step that pins the exact
   version you looked at and disables install scripts.
 - **Package lab.** Scaffold and test extensions, skills, prompts and themes in a throwaway container with
@@ -33,10 +45,18 @@ MCP servers, and build and test your own pi extensions, skills, prompts and them
   by everyone on the panel, so approve only people you trust.
 - **Interface.** Light, dark or system colour scheme and a choice of accent colours, behind the
   palette button in the header and remembered per browser, plus tooltips on the main controls. The Inter
-  typeface is bundled and served by the panel, so it makes no font requests to third parties. Each project
-  opens on its sessions, with GitHub, MCP, packages and the lab one tab away.
+  typeface is bundled and served by the panel, so it makes no font requests to third parties. Pages have
+  their own URLs, so refresh and Back keep your place. Each project opens on its sessions, with GitHub,
+  MCP, packages and the lab one tab away. The account menu has Change password and an About box with
+  the panel and pi versions.
 
 ## Screenshots
+
+![Dashboard](docs/screenshots/dashboard-dark.png)
+_The dashboard: two weeks of activity, recent sessions, model and tool usage, and system health._
+
+![Customizing the dashboard](docs/screenshots/dashboard-customize.png)
+_Customize: drag, resize, remove and add widgets on a snap-to-grid layout (light theme)._
 
 <table>
   <tr>
@@ -86,9 +106,49 @@ the host: run it only on a machine and network you trust, and put it behind HTTP
 `COOKIE_SECURE: 'true'` to the `pi-panel` service's `environment` in `docker-compose.yml`) if anyone
 else can reach it.
 
+Settings in `docker-compose.yml` (set the `PI_PANEL_*` variables in your shell or a `.env` file):
+
+| Variable                                         | Default | What it does                                                                                                               |
+| ------------------------------------------------ | ------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `PI_PANEL_TRUST_PROXY`                           | `false` | Behind a reverse proxy, `true` makes sign-in throttling see real client addresses. Only when the proxy is the only way in. |
+| `PI_PANEL_SANDBOX_MEMORY_MB`                     | `2048`  | Memory limit for each project container.                                                                                   |
+| `PI_PANEL_SANDBOX_CPUS`                          | `2`     | CPU limit for each project container.                                                                                      |
+| `ALLOWED_ORIGINS` (in the service `environment`) | none    | Extra origins allowed to call the API, for proxies that rewrite the `Host` header.                                         |
+
+Resource limits apply to containers created or recreated after you change them.
+
+Optional: runtime images give a project's container more than Node: Python, C/C++ build tools, Go, Rust
+or Java. Open a project's **Runtime** tab, build the ones you want (they are layered on the sandbox
+image), pick one, and recreate the container. The agent is told what is installed. See
+[docs/runtimes.md](docs/runtimes.md).
+
 Optional: the REA reverse-engineering image needs a Ghidra release you choose and verify. In the MCP tab,
 paste its download link and SHA-256 checksum and press **Build REA image**, or build it by hand (see
 [docs/rea.md](docs/rea.md)).
+
+### Updating
+
+Images are built from source, not published, so an update is a rebuild. Pick the branch you run
+(`main` for stable, `nightly` for the test channel; see [Branches and releases](#branches-and-releases)).
+
+```bash
+# 1. Stop the panel and back up ./data (it holds the database and secret.key, which belong together)
+docker compose stop pi-panel
+sudo cp -a data "data-backup-$(date +%Y%m%d-%H%M%S)"
+
+# 2. Get the new code and rebuild
+git pull
+docker compose up -d --build
+
+# 3. Check it came back (migrations run on start)
+curl -s localhost:3000/api/health   # {"status":"ok","db":true,"docker":true,"schema":N}
+```
+
+To roll back, check out the previous commit and rebuild. If the update added a migration (the `schema`
+number went up), also restore the data backup: the older code does not know the newer schema.
+
+After rebuilding the sandbox image (for example to move to a newer pi), press **Recreate container** on
+each project to use it. Workspaces and session history are kept.
 
 ## Development
 
@@ -99,11 +159,31 @@ npm install
 npm run dev:server   # API on :3000 (PI_PANEL_RUNTIME=fake runs without Docker)
 npm run dev:web      # UI on :5173, proxying /api to the server
 
-npm run typecheck && npm run lint && npm test && npm run build
+npm run format:check && npm run typecheck && npm run lint && npm test && npm run build
 ```
 
 `PI_PANEL_RUNTIME=fake` swaps Docker for an in-memory runtime with a scripted fake pi, so the whole UI
 works without containers.
+
+### Branches and releases
+
+| Branch    | What it is                                                        | Run it as             |
+| --------- | ----------------------------------------------------------------- | --------------------- |
+| `nightly` | Integration branch. Feature PRs land here first.                  | A test instance       |
+| `main`    | Stable. Changes arrive by promoting `nightly`, or as a hotfix PR. | The panel you rely on |
+
+- **Features:** branch from `nightly`, open the PR against `nightly`, try it on the test instance, then
+  promote with a `nightly` → `main` PR.
+- **Hotfixes:** branch from `main` and change only the fix, open the PR against `main`, then merge `main`
+  back into `nightly` with a PR right away so the two branches do not drift.
+- **Stacked PRs:** do not delete a branch that another open PR uses as its base; GitHub closes that PR.
+  Retarget the next PR to `nightly` first, then delete.
+- CI (lint, format, typecheck, tests, build, Docker images) runs on every PR and on pushes to `main` and
+  `nightly`.
+
+To run both on one host, give the test instance its own directory, port and data folder, and set
+`PI_PANEL_NAMESPACE` (for example `nightly-`) so its container and network names do not collide with the
+stable panel's. The two can share the sandbox and REA images.
 
 ### Tests against the real thing
 
@@ -129,7 +209,12 @@ docs/                design notes and how-tos
 
 ## Security model, briefly
 
-- One admin account, created on first run. Sessions use HttpOnly, SameSite=Strict cookies.
+- One admin account, created on first run. Sessions use HttpOnly, SameSite=Strict cookies. Failed
+  sign-ins are limited per address (10 per 15 minutes), and expired sign-ins are purged.
+- Writes and WebSocket connections must come from the panel's own origin. SameSite cookies alone do
+  not stop another app on the same host (a different port) from using your session.
+- Member restrictions are checked against the matched route, not the raw URL, so encoded paths cannot
+  reach admin routes. Responses carry a Content-Security-Policy and anti-framing headers.
 - Each project runs in its own container with dropped capabilities and resource limits. The agent runs
   with that container's permissions, so provider keys or command-server secrets passed to a session are
   visible to it. Prefer URL servers that hold their own credentials, or managed containers.
@@ -149,7 +234,8 @@ docs/                design notes and how-tos
 | MCP env passing, secret redaction, repo-local `.pi` not executing           | Real pi and a real MCP server                                  |
 | REA catalog over HTTP (229 tools, 32 destructive hidden by default)         | Real REA 6.8.0 and real pi                                     |
 | Web UI flows (before the Mantine redesign) and serving the built UI         | Driven in a real browser (Playwright) and with the real server |
-| Mantine redesign: typecheck, production build, lint                         | Automated checks only; not yet driven in a browser             |
+| Sign-in, projects, sessions, routing, account menu (Mantine UI)             | Driven in headless Chromium against the fake runtime           |
+| Container start/recreate and status tracking                                | Automated tests (fake runtime); not yet against real Docker    |
 | **Docker: sandbox and panel images build; the panel container runs**        | **Built and started with Docker Compose on a real host**       |
 | **Docker: networks, mounts, `exec`, sidecars, project sessions**            | **Not verified end to end**                                    |
 | **Ghidra / JDK analysis inside the REA image**                              | **Not verified**                                               |
@@ -158,9 +244,10 @@ Expect to fix things on the first real run, and please report what breaks.
 
 ## Not built yet
 
-Promoting lab packages to a shared toolbox, a schema migrations table, a pi version and update page,
-update checks for packages and MCP servers, per-call approval prompts for risky tools, multi-user
-support, and a panel update notice. See [docs/updates.md](docs/updates.md).
+Promoting lab packages to a shared toolbox, one-click pi upgrades (the About box shows the version;
+upgrading is still a rebuild plus **Recreate container**), update checks for packages and MCP servers,
+per-call approval prompts for risky tools, multi-user support, and a panel update notice. See
+[docs/updates.md](docs/updates.md).
 
 ## Documentation
 

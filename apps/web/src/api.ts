@@ -29,12 +29,26 @@ export const login = (username: string, password: string) =>
 export const register = (username: string, password: string) =>
   post<{ pending: true }>('/api/auth/register', { username, password });
 export const logout = () => post<{ ok: true }>('/api/auth/logout');
+export const changePassword = (current: string, next: string) =>
+  post<{ ok: true; signedOutOthers: number }>('/api/auth/password', { current, next });
+
+export interface SystemInfo {
+  panelVersion: string;
+  schema: number;
+  docker: boolean;
+  sandbox: { present: boolean; piVersion: string | null };
+}
+export const getSystem = async (): Promise<SystemInfo> =>
+  (await fetch('/api/system')).json() as Promise<SystemInfo>;
 
 export interface Project {
   id: number;
   name: string;
   status: string;
   repo: string | null;
+  runtime: string;
+  /** The running container was made from a different runtime image; Recreate applies the change. */
+  runtimePending: boolean;
   createdAt: number;
 }
 
@@ -58,6 +72,14 @@ export const createProject = async (name: string) =>
   ).project;
 export const deleteProject = (id: number) =>
   request<void>(`/api/projects/${id}`, { method: 'DELETE' });
+export const getProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}`)).project;
+export const setProjectRuntime = async (id: number, runtime: string) =>
+  (await request<{ project: Project }>(`/api/projects/${id}`, send('PATCH', { runtime }))).project;
+export const restartProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}/restart`, json({}))).project;
+export const recreateProject = async (id: number) =>
+  (await request<{ project: Project }>(`/api/projects/${id}/recreate`, json({}))).project;
 
 export interface Session {
   id: number;
@@ -90,13 +112,26 @@ export const createSession = async (
     .session;
 export const deleteSession = (id: number) =>
   request<void>(`/api/sessions/${id}`, { method: 'DELETE' });
+export const renameSession = async (id: number, name: string) =>
+  (
+    await request<{ session: Session }>(`/api/sessions/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+  ).session;
 export const getSession = async (id: number) =>
   (await request<{ session: Session }>(`/api/sessions/${id}`)).session;
-export const sendPrompt = (id: number, message: string, streamingBehavior?: 'steer') =>
+export const sendPrompt = (id: number, message: string, streamingBehavior?: 'steer' | 'followUp') =>
   request<{ disposition?: string }>(
     `/api/sessions/${id}/prompt`,
     json({ message, streamingBehavior }),
   );
+/** Answers a question an extension asked: exactly one of value, confirmed or cancelled. */
+export const respondUi = (
+  id: number,
+  answer: { id: string } & ({ value: string } | { confirmed: boolean } | { cancelled: true }),
+) => request<{ ok: true }>(`/api/sessions/${id}/ui-response`, json(answer));
 export const abortSession = (id: number) =>
   request<{ ok: true }>(`/api/sessions/${id}/abort`, json({}));
 export const fetchEvents = async (id: number, after: number) =>
@@ -117,6 +152,8 @@ export interface Provider {
   hasKey: boolean;
   models: string[];
   warning?: string;
+  /** The newest failed model call through this provider, until one succeeds. */
+  health?: { message: string; status: number | null; at: number };
 }
 
 export interface ProviderInput {
@@ -149,24 +186,36 @@ export const discoverModels = async (id: number) =>
   (await request<{ provider: Provider }>(`/api/providers/${id}/discover`, send('POST', {})))
     .provider;
 
+export type Forge = 'github' | 'forgejo';
+
 export interface GitHubAccount {
   connected: boolean;
   login?: string;
+  /** Forgejo only: the instance address the token belongs to. */
+  baseUrl?: string;
 }
 
 export interface RepoStatus {
   repo: string | null;
   branch: string | null;
   changes: number;
+  /** Commits on the branch the remote does not have yet; null when that could not be determined. */
+  ahead: number | null;
+  /** Set when the project's repository lives on the other forge. */
+  linkedTo?: Forge;
 }
 
-export const getGitHub = () => request<GitHubAccount>('/api/github');
-export const connectGitHub = (token: string) =>
-  request<GitHubAccount>('/api/github', send('PUT', { token }));
-export const disconnectGitHub = () => request<void>('/api/github', { method: 'DELETE' });
-/** Checks a token against GitHub without storing it. Omit the token to test the stored one. */
-export const testGitHub = (token?: string) =>
-  request<{ login: string; id: number }>('/api/github/test', send('POST', token ? { token } : {}));
+export const getGitHub = (forge: Forge = 'github') => request<GitHubAccount>(`/api/${forge}`);
+export const connectGitHub = (token: string, forge: Forge = 'github', baseUrl?: string) =>
+  request<GitHubAccount>(`/api/${forge}`, send('PUT', { token, ...(baseUrl ? { baseUrl } : {}) }));
+export const disconnectGitHub = (forge: Forge = 'github') =>
+  request<void>(`/api/${forge}`, { method: 'DELETE' });
+/** Checks a token against the forge without storing it. Omit the token to test the stored one. */
+export const testGitHub = (token?: string, forge: Forge = 'github', baseUrl?: string) =>
+  request<{ login: string; id: number }>(
+    `/api/${forge}/test`,
+    send('POST', token ? { token, ...(baseUrl ? { baseUrl } : {}) } : {}),
+  );
 
 /** Whether the sandbox image that project containers are created from has been built. */
 export const getSandbox = () => request<{ available: boolean }>('/api/sandbox');
@@ -216,24 +265,35 @@ export interface ReaState {
 export const getRea = () => request<ReaState>('/api/rea');
 export const buildRea = (ghidraUrl: string, ghidraSha256: string) =>
   request<ReaState>('/api/rea/build', send('POST', { ghidraUrl, ghidraSha256 }));
-export const getRepoStatus = (projectId: number) =>
-  request<RepoStatus>(`/api/projects/${projectId}/github`);
-export const cloneRepo = (projectId: number, repo: string, branch?: string) =>
+export const getRepoStatus = (projectId: number, forge: Forge = 'github') =>
+  request<RepoStatus>(`/api/projects/${projectId}/${forge}`);
+export const cloneRepo = (
+  projectId: number,
+  repo: string,
+  branch?: string,
+  forge: Forge = 'github',
+) =>
   request<{ repo: string; branch: string }>(
-    `/api/projects/${projectId}/github/clone`,
+    `/api/projects/${projectId}/${forge}/clone`,
     send('POST', { repo, ...(branch ? { branch } : {}) }),
   );
-export const pushBranch = (projectId: number, branch: string, message?: string) =>
+export const pushBranch = (
+  projectId: number,
+  branch: string,
+  message?: string,
+  forge: Forge = 'github',
+) =>
   request<{ branch: string; commit: string; committed: boolean }>(
-    `/api/projects/${projectId}/github/push`,
+    `/api/projects/${projectId}/${forge}/push`,
     send('POST', { branch, ...(message ? { message } : {}) }),
   );
 export const openPullRequest = (
   projectId: number,
   input: { head: string; title: string; body?: string },
+  forge: Forge = 'github',
 ) =>
   request<{ url: string; number: number | null; base: string }>(
-    `/api/projects/${projectId}/github/pr`,
+    `/api/projects/${projectId}/${forge}/pr`,
     send('POST', input),
   );
 
@@ -569,3 +629,82 @@ export const removeAccount = async (id: number) => {
   const data = (await res.json()) as { error?: string };
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
 };
+
+export interface ActivityDay {
+  /** Local calendar date, YYYY-MM-DD. */
+  date: string;
+  prompts: number;
+  toolCalls: number;
+  errors: number;
+}
+
+export interface DashboardSession {
+  id: number;
+  projectId: number;
+  projectName: string;
+  name: string;
+  status: Session['status'];
+  modelId: string | null;
+  providerName: string | null;
+  createdAt: number;
+  lastActivityAt: number | null;
+  prompts: number;
+}
+
+export interface DashboardProject {
+  id: number;
+  name: string;
+  status: string;
+  repo: string | null;
+  createdAt: number;
+  sessions: number;
+  runningSessions: number;
+  prompts: number;
+  lastActivityAt: number | null;
+}
+
+export interface DashboardData {
+  generatedAt: number;
+  activity: { days: ActivityDay[] };
+  projects: { total: number; running: number; items: DashboardProject[] };
+  sessions: { total: number; running: number; errored: number; recent: DashboardSession[] };
+  models: { model: string; sessions: number }[];
+  tools: { name: string; calls: number }[];
+  providers: {
+    total: number;
+    withKey: number;
+    models: number;
+    warnings: number;
+    failing: number;
+  };
+  mcp: { total: number; connected: number; failing: number; untested: number; tools: number };
+  github: { connected: boolean; login: string | null };
+  forgejo: { connected: boolean; login: string | null };
+  sandbox: { available: boolean };
+  /** Admin only. */
+  users: { total: number; pending: number } | null;
+}
+
+/** Everything the home dashboard shows. Days are bucketed in this browser's time zone. */
+export const getDashboard = () =>
+  request<DashboardData>(`/api/dashboard?tz=${-new Date().getTimezoneOffset()}`);
+
+export interface RuntimeState {
+  id: string;
+  label: string;
+  description: string;
+  tag: string;
+  present: boolean;
+  /** Built on a base image that has since been rebuilt. */
+  stale: boolean;
+  sizeBytes: number | null;
+  build: {
+    status: 'idle' | 'building' | 'done' | 'failed';
+    log: string[];
+    error?: string;
+  };
+}
+export const listRuntimes = async () =>
+  (await request<{ runtimes: RuntimeState[] }>('/api/runtimes')).runtimes;
+export const buildRuntime = async (id: string) =>
+  (await request<{ runtimes: RuntimeState[] }>(`/api/runtimes/${id}/build`, send('POST'))).runtimes;

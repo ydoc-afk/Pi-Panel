@@ -110,6 +110,7 @@ export function ReaBuilder({ onAdd }: { onAdd: () => void }) {
           </Text>
           <TextInput
             label="Ghidra download link"
+            description="Must be a Ghidra 12.1.x release (12.1.4 recommended). Other versions are rejected by REA."
             placeholder="https://github.com/NationalSecurityAgency/ghidra/releases/download/..."
             value={url}
             onChange={(e) => setUrl(e.currentTarget.value)}

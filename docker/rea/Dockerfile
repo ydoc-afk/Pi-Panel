@@ -2,12 +2,13 @@
 # Pi-Panel starts it on a private network with no internet access and mounts a project's uploaded
 # samples read-only at /samples. NOT yet built or run end to end: see docs/rea.md.
 #
-# Build (the Ghidra URL and checksum are required; see docs/rea.md for where to get them):
+# Build (the Ghidra URL and checksum are required; see docs/rea.md for where to get them).
+# The Ghidra release must be 12.1.x (verified with 12.1.4): REA 6.8.0 marks any other line unavailable.
 #   docker build -t pi-panel/rea:6.8.0 \
 #     --build-arg GHIDRA_URL=... --build-arg GHIDRA_SHA256=... docker/rea
 
-# JDK 21 from Temurin; Debian bookworm only ships 17.
-FROM eclipse-temurin:21-jdk-jammy AS jdk
+# REA 6.8.0 requires a full 64-bit JDK 25 or newer for Ghidra; Debian bookworm only ships 17.
+FROM eclipse-temurin:25-jdk-jammy AS jdk
 
 # Node >= 22.23.4 or 24.22.1 is required by REA 6.8.0.
 FROM node:24-bookworm-slim
@@ -29,6 +30,9 @@ RUN curl -fsSL "$GHIDRA_URL" -o /tmp/ghidra.zip \
  && unzip -q /tmp/ghidra.zip -d /opt \
  && mv /opt/ghidra_* /opt/ghidra \
  && rm /tmp/ghidra.zip
+# Fail the build now, not at analysis time, if the release is not on the line REA accepts.
+RUN grep -q '^application.version=12\.1\.' /opt/ghidra/Ghidra/application.properties \
+ || { echo "REA 6.8.0 needs Ghidra 12.1.x; this is: $(grep '^application.version=' /opt/ghidra/Ghidra/application.properties)" >&2; exit 1; }
 
 # rea-agents has no install-time scripts, so --ignore-scripts costs nothing and removes that risk.
 ARG REA_VERSION=6.8.0

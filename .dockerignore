@@ -4,3 +4,6 @@ dist
 data
 .git
 .env
+.env.*
+coverage
+docs/screenshots

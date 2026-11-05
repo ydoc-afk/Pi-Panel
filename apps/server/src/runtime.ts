@@ -6,6 +6,8 @@ export interface ContainerSpec {
   workspacePath: string;
   /** Host dir mounted as pi's agent dir inside the container. */
   agentDir: string;
+  /** Image to create the container from; the configured sandbox image when omitted. */
+  image?: string;
 }
 
 /** A process running inside a container, with piped stdio. */
@@ -72,10 +74,22 @@ export interface SidecarState {
 
 /** Container operations Pi-Panel needs; the Docker implementation is the only one that talks to Docker. */
 export interface ContainerRuntime {
+  /** Whether the container engine answers. */
+  ping(): Promise<boolean>;
   /** Creates and starts a sandbox container, returning its id. */
   createAndStart(spec: ContainerSpec): Promise<string>;
   /** Stops and removes the container. Must succeed if it is already gone. */
   remove(containerId: string): Promise<void>;
+  /** Whether a sandbox container is running, stopped, or gone. */
+  containerState(containerId: string): Promise<SidecarState['state']>;
+  /** Starts a stopped sandbox container. */
+  start(containerId: string): Promise<void>;
+  /** Labels on a local image, or null if the image is absent. */
+  imageLabels(tag: string): Promise<Record<string, string> | null>;
+  /** The tag of the base sandbox image (SANDBOX_IMAGE or the default). */
+  baseImage(): string;
+  /** Id, size and labels of a local image, or null if the image is absent. */
+  imageInfo(tag: string): Promise<ImageInfo | null>;
   /** Starts a process in a running container with stdin/stdout/stderr attached. */
   exec(containerId: string, spec: ExecSpec): Promise<RunningProcess>;
   /** Runs a command to completion in a new throwaway container, then removes it. */
@@ -98,6 +112,12 @@ export interface ContainerRuntime {
   imageExists(tag: string): Promise<boolean>;
   /** Builds an image from a tar build context. Each build log line goes to onLog. Rejects on failure. */
   buildImage(spec: BuildSpec): Promise<void>;
+}
+
+export interface ImageInfo {
+  id: string;
+  sizeBytes: number;
+  labels: Record<string, string>;
 }
 
 export interface BuildSpec {
@@ -139,7 +159,13 @@ export class FakeRuntime implements ContainerRuntime {
     '{"level":30,"msg":"MCP transport listening","transport":"streamable-http"}\n';
   failNextCreate = false;
   fakePi: FakePiOptions = {};
+  /** Set to false to simulate an unreachable Docker daemon. */
+  reachable = true;
   private next = 1;
+
+  async ping(): Promise<boolean> {
+    return this.reachable;
+  }
 
   async createAndStart(spec: ContainerSpec): Promise<string> {
     if (this.failNextCreate) {
@@ -153,11 +179,55 @@ export class FakeRuntime implements ContainerRuntime {
 
   async remove(containerId: string): Promise<void> {
     this.containers.delete(containerId);
+    this.stopped.delete(containerId);
     for (const net of this.networks.values()) net.connected.delete(containerId);
   }
 
-  async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
+  /** Containers simulated as stopped (e.g. after a host reboot without a restart policy). */
+  readonly stopped = new Set<string>();
+
+  async containerState(containerId: string): Promise<SidecarState['state']> {
+    if (!this.containers.has(containerId)) return 'missing';
+    return this.stopped.has(containerId) ? 'exited' : 'running';
+  }
+
+  async start(containerId: string): Promise<void> {
     if (!this.containers.has(containerId)) throw new Error('fake runtime: no such container');
+    this.stopped.delete(containerId);
+  }
+
+  /** Labels reported for the sandbox image. */
+  sandboxLabels: Record<string, string> = { 'org.pi-panel.pi-version': '1.4.0' };
+
+  async imageLabels(tag: string): Promise<Record<string, string> | null> {
+    if (tag === 'sandbox') return this.sandboxImageAvailable ? this.sandboxLabels : null;
+    return this.images.has(tag) ? {} : null;
+  }
+
+  baseImage(): string {
+    return 'pi-panel/sandbox-base:latest';
+  }
+
+  /** Labels and ids for images the fake daemon holds; builds fill this in from build args. */
+  readonly imageInfos = new Map<string, ImageInfo>();
+  /** Id reported for the base image. Change it to simulate a rebuilt base. */
+  baseImageId = 'sha256:base1';
+
+  async imageInfo(tag: string): Promise<ImageInfo | null> {
+    if (tag === this.baseImage()) {
+      return this.sandboxImageAvailable
+        ? { id: this.baseImageId, sizeBytes: 400e6, labels: this.sandboxLabels }
+        : null;
+    }
+    return this.images.has(tag)
+      ? (this.imageInfos.get(tag) ?? { id: `sha256:${tag}`, sizeBytes: 1e6, labels: {} })
+      : null;
+  }
+
+  async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
+    if (!this.containers.has(containerId) || this.stopped.has(containerId)) {
+      throw new Error('fake runtime: container is not running');
+    }
     if (spec.cmd[0] !== 'pi') throw new Error(`fake runtime: unsupported command ${spec.cmd[0]}`);
     this.execs.push(spec);
     const proc = new FakePiProcess(spec.cmd.slice(1), {
@@ -257,6 +327,11 @@ export class FakeRuntime implements ContainerRuntime {
     }
     spec.onLog('Successfully built fake');
     this.images.add(spec.tag);
+    this.imageInfos.set(spec.tag, {
+      id: `sha256:${spec.tag}`,
+      sizeBytes: 800e6,
+      labels: { 'org.pi-panel.base-id': spec.buildArgs.BASE_ID ?? '' },
+    });
   }
 
   async sidecarLogs(id: string, tail: number): Promise<string> {
