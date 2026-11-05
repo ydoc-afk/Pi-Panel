@@ -49,6 +49,8 @@ export interface Project {
   runtime: string;
   /** The running container was made from a different runtime image; Recreate applies the change. */
   runtimePending: boolean;
+  /** Used by every session that did not choose a model; null leaves it to pi's own default. */
+  defaultModel: { providerId: number; modelId: string } | null;
   createdAt: number;
 }
 
@@ -76,6 +78,12 @@ export const getProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}`)).project;
 export const setProjectRuntime = async (id: number, runtime: string) =>
   (await request<{ project: Project }>(`/api/projects/${id}`, send('PATCH', { runtime }))).project;
+export const setProjectDefaultModel = async (
+  id: number,
+  defaultModel: { providerId: number; modelId: string } | null,
+) =>
+  (await request<{ project: Project }>(`/api/projects/${id}`, send('PATCH', { defaultModel })))
+    .project;
 export const restartProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}/restart`, json({}))).project;
 export const recreateProject = async (id: number) =>

@@ -303,7 +303,8 @@ export class SessionManager {
       'rpc',
       ...(row.pi_session_file ? ['--session', row.pi_session_file] : []),
     ];
-    const provider = row.provider_id ? this.providers.find(row.provider_id) : undefined;
+    const chosen = this.modelOf(row);
+    const provider = chosen ? this.providers.find(chosen.providerId) : undefined;
     let proc;
     let sidecarsResult: Awaited<ReturnType<SidecarManager['ensureForProject']>> | undefined;
     try {
@@ -348,11 +349,11 @@ export class SessionManager {
       this.stopClient(id, client);
       throw new SessionError(502, 'pi did not start correctly');
     }
-    if (provider && row.model_id) {
+    if (provider && chosen) {
       // set_model over RPC rather than --model: model ids such as "qwen2.5-coder:7b" would
       // collide with the CLI's ":<thinking>" suffix syntax.
       const res = await client
-        .request({ type: 'set_model', provider: provider.piKey, modelId: row.model_id })
+        .request({ type: 'set_model', provider: provider.piKey, modelId: chosen.modelId })
         .catch((err: Error) => ({ success: false, error: err.message }));
       if (!res.success) {
         this.stopClient(id, client);
@@ -442,19 +443,39 @@ export class SessionManager {
     const msg = event.message as
       { role?: string; stopReason?: string; errorMessage?: string } | undefined;
     if (msg?.role !== 'assistant') return;
-    const row = this.db.prepare('SELECT provider_id FROM sessions WHERE id = ?').get(id) as
-      { provider_id: number | null } | undefined;
-    if (!row?.provider_id) return;
+    const session = this.db
+      .prepare('SELECT project_id, provider_id, model_id FROM sessions WHERE id = ?')
+      .get(id) as Pick<SessionRow, 'project_id' | 'provider_id' | 'model_id'> | undefined;
+    const row = session && this.modelOf(session);
+    if (!row) return;
     if (msg.stopReason === 'error' || msg.errorMessage) {
-      const health = this.providers.recordFailure(row.provider_id, msg.errorMessage ?? '');
+      const health = this.providers.recordFailure(row.providerId, msg.errorMessage ?? '');
       this.record(id, {
         type: 'panel_notice',
         level: 'error',
         message: `Model provider error: ${health.message}`,
       });
     } else if (msg.stopReason !== 'aborted') {
-      this.providers.clearFailure(row.provider_id);
+      this.providers.clearFailure(row.providerId);
     }
+  }
+
+  /**
+   * The model a session runs: the one it chose, else its project's default model. null means pi's own
+   * default. Resolved each time pi starts, so changing the default applies to every session that did
+   * not choose a model, including ones that already exist.
+   */
+  private modelOf(row: Pick<SessionRow, 'project_id' | 'provider_id' | 'model_id'>) {
+    if (row.provider_id && row.model_id) {
+      return { providerId: row.provider_id, modelId: row.model_id };
+    }
+    const d = this.db
+      .prepare('SELECT default_provider_id, default_model_id FROM projects WHERE id = ?')
+      .get(row.project_id) as
+      { default_provider_id: number | null; default_model_id: string | null } | undefined;
+    return d?.default_provider_id && d.default_model_id
+      ? { providerId: d.default_provider_id, modelId: d.default_model_id }
+      : null;
   }
 
   /**
