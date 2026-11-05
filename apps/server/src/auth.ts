@@ -34,6 +34,11 @@ export interface SessionUser {
 export function memberBlocked(method: string, path: string): boolean {
   if (path.startsWith('/api/admin/')) return true;
   if (/^\/api\/projects\/[^/]+\/(github|forgejo)\/(clone|push|pr)$/.test(path)) return true;
+  // The Repository tab clones, pulls and pushes with the admin's forge accounts.
+  if (method !== 'GET' && method !== 'HEAD') {
+    if (/^\/api\/projects\/[^/]+\/repos(\/(push|pull))?$/.test(path)) return true;
+    if (/^\/api\/projects\/[^/]+\/repos\/[^/]+\/(push|pull|pr)$/.test(path)) return true;
+  }
   if (method === 'GET' || method === 'HEAD') {
     return path === '/api/mcp/registry' || path === '/api/rea/log';
   }
