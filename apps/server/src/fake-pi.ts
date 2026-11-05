@@ -27,6 +27,10 @@ export class FakePiProcess implements RunningProcess {
   private dead = false;
   private run: { aborted: boolean } | null = null;
   private readonly sessionFile: string;
+  private thinkingLevel = 'medium';
+  private autoCompaction = true;
+  /** Context the fake reports, grown by each prompt so token stats move. */
+  private prompts = 0;
 
   constructor(
     args: string[],
@@ -162,10 +166,70 @@ export class FakePiProcess implements RunningProcess {
         this.respond(id, 'get_state', true, {
           data: {
             isStreaming: this.run !== null,
+            isCompacting: false,
+            thinkingLevel: this.thinkingLevel,
+            autoCompactionEnabled: this.autoCompaction,
+            model: { id: 'fake-model', provider: 'fake', contextWindow: 100000, reasoning: true },
             sessionFile: this.sessionFile,
             sessionId: 'fake',
           },
         });
+        return;
+      case 'get_available_thinking_levels':
+        this.respond(id, 'get_available_thinking_levels', true, {
+          data: { levels: ['off', 'minimal', 'low', 'medium', 'high'] },
+        });
+        return;
+      case 'set_thinking_level':
+        if (!['off', 'minimal', 'low', 'medium', 'high'].includes(String(cmd.level))) {
+          this.respond(id, 'set_thinking_level', false, {
+            error: `Unsupported thinking level: ${String(cmd.level)}`,
+          });
+        } else {
+          this.thinkingLevel = String(cmd.level);
+          this.respond(id, 'set_thinking_level', true);
+        }
+        return;
+      case 'set_auto_compaction':
+        this.autoCompaction = cmd.enabled === true;
+        this.respond(id, 'set_auto_compaction', true);
+        return;
+      case 'get_session_stats':
+        this.respond(id, 'get_session_stats', true, {
+          data: {
+            userMessages: this.prompts,
+            assistantMessages: this.prompts,
+            toolCalls: 0,
+            totalMessages: this.prompts * 2,
+            tokens: {
+              input: this.prompts * 1000,
+              output: this.prompts * 200,
+              cacheRead: 0,
+              cacheWrite: 0,
+              total: this.prompts * 1200,
+            },
+            cost: this.prompts * 0.01,
+            contextUsage: {
+              tokens: this.prompts * 1200,
+              contextWindow: 100000,
+              percent: (this.prompts * 1200) / 1000,
+            },
+          },
+        });
+        return;
+      case 'compact':
+        if (this.prompts === 0) {
+          this.respond(id, 'compact', false, { error: 'Nothing to compact' });
+          return;
+        }
+        this.respond(id, 'compact', true, {
+          data: {
+            summary: `Summary${cmd.customInstructions ? ` (${String(cmd.customInstructions)})` : ''}`,
+            tokensBefore: this.prompts * 1200,
+            estimatedTokensAfter: 300,
+          },
+        });
+        this.prompts = 0;
         return;
       case 'prompt': {
         if (typeof cmd.message !== 'string') {
@@ -183,6 +247,7 @@ export class FakePiProcess implements RunningProcess {
           return;
         }
         this.respond(id, 'prompt', true, { data: { disposition: 'started' } });
+        this.prompts += 1;
         await this.runPrompt(cmd.message);
         return;
       }
@@ -266,6 +331,20 @@ export class FakePiProcess implements RunningProcess {
         method: 'input',
         title: '@pi-panel/push',
         placeholder: message.slice(6),
+      });
+      while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead) await tick();
+      const answer = this.uiAnswers.get(askId);
+      message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
+    }
+    // "/lab <json>" is what the lab_run tool does: ask the reserved dialog and wait for the report.
+    if (message.startsWith('/lab ')) {
+      const askId = `ui-${++this.uiSeq}`;
+      this.send({
+        type: 'extension_ui_request',
+        id: askId,
+        method: 'input',
+        title: '@pi-panel/lab-run',
+        placeholder: message.slice(5),
       });
       while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead) await tick();
       const answer = this.uiAnswers.get(askId);

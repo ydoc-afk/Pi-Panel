@@ -22,6 +22,7 @@ import { PackageService, registerPackages, type PackageOptions } from './package
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerMcpRegistry } from './mcp-registry.js';
 import { ReaBuilder, ReaBuildError } from './rea-build.js';
+import { PackageSetService, registerPackageSets } from './package-sets.js';
 import { RepoService, registerRepos } from './repos.js';
 import { RuntimeBuilder, RuntimeBuildError } from './runtimes.js';
 import { registerProjects } from './projects.js';
@@ -109,6 +110,7 @@ export function buildApp(opts: AppOptions = {}) {
   );
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
+  sessions.setLabRunner((projectId, request) => lab.run(projectId, request));
   const rea = new ReaBuilder(runtime, { dataDir });
   const runtimes = new RuntimeBuilder(runtime, { dataDir });
   const packages = new PackageService(db, runtime, sessions, dataDir, {
@@ -142,6 +144,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerGitHub(app, forgejo, 'forgejo');
     registerRepos(app, repos);
     registerPackages(app, packages);
+    registerPackageSets(app, new PackageSetService(db, packages));
     registerLab(app, lab);
     registerMcp(app, mcp);
     registerSamples(app, samples);

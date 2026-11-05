@@ -90,6 +90,8 @@ export const recreateProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}/recreate`, json({}))).project;
 
 export interface Session {
+  /** 'lab' for the package lab's design session, which the session list leaves out. */
+  kind?: string;
   id: number;
   projectId: number;
   name: string;
@@ -380,6 +382,25 @@ export const removePackage = (projectId: number, source: string) =>
   request<PackageChange>(`/api/projects/${projectId}/packages/remove`, send('POST', { source }));
 
 export type LabKind = 'extension' | 'skill' | 'prompt' | 'theme';
+
+export interface PackageSetStatus {
+  id: number;
+  name: string;
+  sources: { source: string; name: string; version: string }[];
+  createdAt: number;
+  installed: string[];
+  missing: string[];
+  different: { source: string; installed: string }[];
+}
+export const listPackageSets = async (projectId: number) =>
+  (await request<{ sets: PackageSetStatus[] }>(`/api/projects/${projectId}/package-sets`)).sets;
+export const savePackageSet = (name: string, fromProjectId: number) =>
+  request<{ set: PackageSetStatus; skipped: number }>(
+    '/api/package-sets',
+    send('POST', { name, fromProjectId }),
+  );
+export const deletePackageSet = (id: number) =>
+  request<void>(`/api/package-sets/${id}`, { method: 'DELETE' });
 
 export interface LabPackage {
   path: string;
@@ -743,3 +764,33 @@ export const listRuntimes = async () =>
   (await request<{ runtimes: RuntimeState[] }>('/api/runtimes')).runtimes;
 export const buildRuntime = async (id: string) =>
   (await request<{ runtimes: RuntimeState[] }>(`/api/runtimes/${id}/build`, send('POST'))).runtimes;
+
+export interface PiState {
+  running: boolean;
+  thinkingLevel: string | null;
+  availableThinkingLevels: string[];
+  autoCompaction: boolean | null;
+  isCompacting: boolean;
+  model: { id: string; provider: string | null; contextWindow: number | null } | null;
+  stats: {
+    tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number };
+    cost: number;
+    toolCalls: number;
+    messages: number;
+    context: { tokens: number | null; window: number | null; percent: number | null } | null;
+  } | null;
+}
+export const getPiState = (sessionId: number) => request<PiState>(`/api/sessions/${sessionId}/pi`);
+export const setThinkingLevel = (sessionId: number, level: string) =>
+  request<PiState>(`/api/sessions/${sessionId}/thinking`, send('POST', { level }));
+export const setAutoCompaction = (sessionId: number, enabled: boolean) =>
+  request<PiState>(`/api/sessions/${sessionId}/auto-compaction`, send('POST', { enabled }));
+export const compactSession = (sessionId: number, instructions?: string) =>
+  request<{ summary: string; tokensBefore: number | null; tokensAfter: number | null }>(
+    `/api/sessions/${sessionId}/compact`,
+    send('POST', instructions ? { instructions } : {}),
+  );
+
+/** The package lab's design session for a project; made on first use. */
+export const getLabSession = async (projectId: number) =>
+  (await request<{ session: Session }>(`/api/projects/${projectId}/lab/session`)).session;

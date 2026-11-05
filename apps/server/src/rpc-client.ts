@@ -72,14 +72,18 @@ export class RpcClient {
     this.closeCbs.push(cb);
   }
 
-  request(command: { type: string } & Record<string, unknown>): Promise<RpcResponse> {
+  /** timeoutMs overrides the default for commands that legitimately take long, such as compact. */
+  request(
+    command: { type: string } & Record<string, unknown>,
+    timeoutMs = this.timeoutMs,
+  ): Promise<RpcResponse> {
     if (this.closed) return Promise.reject(new Error('pi process has exited'));
     const id = `r${this.nextId++}`;
     return new Promise<RpcResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for ${command.type} response`));
-      }, this.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.proc.write(JSON.stringify({ ...command, id }) + '\n');
     });

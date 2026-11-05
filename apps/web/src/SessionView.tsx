@@ -12,6 +12,7 @@ import {
 import type { StreamMessage } from './api.js';
 import { ExtensionDialog, ExtensionStatus, ExtensionWidgets } from './ExtensionUi.js';
 import { TaskList } from './TaskList.js';
+import { PiControls } from './PiControls.js';
 import { ErrorText, Tip } from './ui.js';
 import { parseBlocks, parseSpans } from './termMarkdown.js';
 
@@ -354,7 +355,16 @@ function download(name: string, text: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SessionView({ sessionId, name }: { sessionId: number; name?: string }) {
+export function SessionView({
+  sessionId,
+  name,
+  onIdle,
+}: {
+  sessionId: number;
+  name?: string;
+  /** Called each time the agent finishes a turn, e.g. to rescan files it may have written. */
+  onIdle?: () => void;
+}) {
   const [t, push] = useReducer(
     (state: Transcript, m: StreamMessage | 'reset') =>
       m === 'reset' ? emptyTranscript : applyMessage(state, m),
@@ -362,6 +372,11 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
   );
   const [text, setText] = useState('');
   const [error, setError] = useState('');
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    if (wasRunning.current && !t.running) onIdle?.();
+    wasRunning.current = t.running;
+  }, [t.running]);
   const [mode, setMode] = useState<'steer' | 'followUp'>('steer');
   const [following, setFollowing] = useState(true);
   const lastSeq = useRef(0);
@@ -477,6 +492,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
           '@keyframes pp-cursor { 50% { opacity: 0; } } @keyframes pp-blink { 50% { opacity: 0.25; } } .pp-blink { animation: pp-blink 1s steps(1) infinite; }'
         }
       </style>
+      <PiControls sessionId={sessionId} working={t.running} />
       <div
         style={{
           background: TERM.bg,

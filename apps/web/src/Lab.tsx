@@ -15,6 +15,8 @@ import {
   Textarea,
 } from '@mantine/core';
 import {
+  deleteSession,
+  getLabSession,
   listLabPackages,
   runLab,
   scaffoldLabPackage,
@@ -23,7 +25,10 @@ import {
   type LabPackage,
   type LabRun,
   type LabTest,
+  type Session,
 } from './api.js';
+import { SessionView } from './SessionView.js';
+import { askConfirm } from './ConfirmDialog.js';
 import { Collapsible, ErrorText, mono } from './ui.js';
 
 const KINDS: LabKind[] = ['extension', 'skill', 'prompt', 'theme'];
@@ -248,6 +253,88 @@ function Results({ result }: { result: LabRun }) {
   );
 }
 
+/**
+ * A pi session that belongs to the lab. It is told how to build packages under lab/<name> and has a
+ * lab_run tool, so it can design a tool or skill, run the lab on it and fix what the report shows.
+ */
+function DesignSession({ projectId, onIdle }: { projectId: number; onIdle: () => void }) {
+  const [session, setSession] = useState<Session | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  async function open() {
+    setBusy(true);
+    setError('');
+    try {
+      setSession(await getLabSession(projectId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open the design session');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startOver() {
+    if (!session) return;
+    if (
+      !(await askConfirm(
+        'Start a new design session? The old transcript is deleted. Packages already written to lab/ stay.',
+      ))
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError('');
+    try {
+      await deleteSession(session.id);
+      setSession(await getLabSession(projectId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start a new session');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    setSession(null);
+  }, [projectId]);
+
+  return (
+    <Collapsible title="Design with pi">
+      <Stack gap="sm">
+        <Text size="sm" c="dimmed">
+          A pi session just for building tools and skills. Describe what you want; it reads
+          pi&apos;s docs, writes the package under <Code>lab/</Code>, runs it in the lab and fixes
+          what the report shows. It uses this project&apos;s default model, and its transcript stays
+          here, not in the session list.
+        </Text>
+        {session ? (
+          <>
+            <SessionView
+              key={session.id}
+              sessionId={session.id}
+              name={session.name}
+              onIdle={onIdle}
+            />
+            <Group>
+              <Button variant="default" size="xs" disabled={busy} onClick={() => void startOver()}>
+                Start a new design session
+              </Button>
+            </Group>
+          </>
+        ) : (
+          <Group>
+            <Button loading={busy} onClick={() => void open()}>
+              Open the design session
+            </Button>
+          </Group>
+        )}
+        <ErrorText error={error} />
+      </Stack>
+    </Collapsible>
+  );
+}
+
 export function Lab({ projectId }: { projectId: number }) {
   const [packages, setPackages] = useState<LabPackage[]>([]);
   const [selected, setSelected] = useState('');
@@ -304,113 +391,116 @@ export function Lab({ projectId }: { projectId: number }) {
   const toolNames = (result?.report?.tools ?? []).map((t) => t.name);
 
   return (
-    <Collapsible title="Package lab">
-      <Stack gap="sm">
-        <Text size="sm" c="dimmed">
-          Build and test extensions, skills, prompts and themes. Runs use a throwaway container with
-          no network and no credentials. Results are advisory: the package&apos;s own code runs
-          there and could influence the report.
-        </Text>
+    <Stack gap="md">
+      <DesignSession projectId={projectId} onIdle={() => void refresh().catch(() => undefined)} />
+      <Collapsible title="Package lab">
+        <Stack gap="sm">
+          <Text size="sm" c="dimmed">
+            Build and test extensions, skills, prompts and themes. Runs use a throwaway container
+            with no network and no credentials. Results are advisory: the package&apos;s own code
+            runs there and could influence the report.
+          </Text>
 
-        <form onSubmit={create}>
-          <Group gap="xs" align="flex-end">
-            <TextInput
-              placeholder="new-package-name"
-              aria-label="New package name"
-              value={name}
-              onChange={(e) => setName(e.currentTarget.value)}
-            />
-            <Checkbox.Group value={kinds} onChange={setKinds}>
-              <Group gap="xs">
-                {KINDS.map((k) => (
-                  <Checkbox key={k} value={k} label={k} />
-                ))}
-              </Group>
-            </Checkbox.Group>
-            <Button type="submit" disabled={!name.trim() || kinds.length === 0}>
-              Create starter package
-            </Button>
-          </Group>
-        </form>
-
-        <Group gap="xs" align="flex-end">
-          <Select
-            aria-label="Package"
-            placeholder={packages.length === 0 ? 'No packages found' : 'Choose a package'}
-            w={380}
-            value={selected || null}
-            data={packages.map((p) => ({
-              value: p.path,
-              label: `${p.path}${p.name ? ` (${p.name})` : ''}`,
-            }))}
-            onChange={(v) => setSelected(v ?? '')}
-          />
-          <Button
-            variant="default"
-            onClick={() => void refresh().catch((e: Error) => setError(e.message))}
-          >
-            Rescan
-          </Button>
-        </Group>
-
-        {selected && (
-          <Stack gap="xs">
-            {rows.map((r, i) => (
-              <Group key={i} gap="xs" align="flex-start" wrap="wrap">
-                <Autocomplete
-                  placeholder="tool name"
-                  aria-label={`Test ${i + 1} tool`}
-                  data={toolNames}
-                  value={r.tool}
-                  onChange={(v) => update(i, { tool: v })}
-                  w={180}
-                />
-                <Textarea
-                  rows={2}
-                  aria-label={`Test ${i + 1} input`}
-                  value={r.input}
-                  onChange={(e) => update(i, { input: e.currentTarget.value })}
-                  styles={{ input: mono }}
-                  w={300}
-                />
-                <TextInput
-                  placeholder="output contains (optional)"
-                  aria-label={`Test ${i + 1} expected output`}
-                  value={r.expectContains}
-                  onChange={(e) => update(i, { expectContains: e.currentTarget.value })}
-                  w={220}
-                />
-                <Checkbox
-                  mt={8}
-                  label="expect error"
-                  checked={r.expectError}
-                  onChange={(e) => update(i, { expectError: e.currentTarget.checked })}
-                />
-                <Button
-                  variant="subtle"
-                  color="red"
-                  size="xs"
-                  mt={4}
-                  onClick={() => setRows((cur) => cur.filter((_, j) => j !== i))}
-                >
-                  Remove
-                </Button>
-              </Group>
-            ))}
-            <Group gap="xs">
-              <Button variant="light" onClick={() => setRows((cur) => [...cur, emptyRow()])}>
-                Add tool test
-              </Button>
-              <Button loading={running} onClick={() => void run()}>
-                {running ? 'Running in a throwaway container...' : 'Run in lab'}
+          <form onSubmit={create}>
+            <Group gap="xs" align="flex-end">
+              <TextInput
+                placeholder="new-package-name"
+                aria-label="New package name"
+                value={name}
+                onChange={(e) => setName(e.currentTarget.value)}
+              />
+              <Checkbox.Group value={kinds} onChange={setKinds}>
+                <Group gap="xs">
+                  {KINDS.map((k) => (
+                    <Checkbox key={k} value={k} label={k} />
+                  ))}
+                </Group>
+              </Checkbox.Group>
+              <Button type="submit" disabled={!name.trim() || kinds.length === 0}>
+                Create starter package
               </Button>
             </Group>
-          </Stack>
-        )}
+          </form>
 
-        <ErrorText error={error} />
-        {result && <Results result={result} />}
-      </Stack>
-    </Collapsible>
+          <Group gap="xs" align="flex-end">
+            <Select
+              aria-label="Package"
+              placeholder={packages.length === 0 ? 'No packages found' : 'Choose a package'}
+              w={380}
+              value={selected || null}
+              data={packages.map((p) => ({
+                value: p.path,
+                label: `${p.path}${p.name ? ` (${p.name})` : ''}`,
+              }))}
+              onChange={(v) => setSelected(v ?? '')}
+            />
+            <Button
+              variant="default"
+              onClick={() => void refresh().catch((e: Error) => setError(e.message))}
+            >
+              Rescan
+            </Button>
+          </Group>
+
+          {selected && (
+            <Stack gap="xs">
+              {rows.map((r, i) => (
+                <Group key={i} gap="xs" align="flex-start" wrap="wrap">
+                  <Autocomplete
+                    placeholder="tool name"
+                    aria-label={`Test ${i + 1} tool`}
+                    data={toolNames}
+                    value={r.tool}
+                    onChange={(v) => update(i, { tool: v })}
+                    w={180}
+                  />
+                  <Textarea
+                    rows={2}
+                    aria-label={`Test ${i + 1} input`}
+                    value={r.input}
+                    onChange={(e) => update(i, { input: e.currentTarget.value })}
+                    styles={{ input: mono }}
+                    w={300}
+                  />
+                  <TextInput
+                    placeholder="output contains (optional)"
+                    aria-label={`Test ${i + 1} expected output`}
+                    value={r.expectContains}
+                    onChange={(e) => update(i, { expectContains: e.currentTarget.value })}
+                    w={220}
+                  />
+                  <Checkbox
+                    mt={8}
+                    label="expect error"
+                    checked={r.expectError}
+                    onChange={(e) => update(i, { expectError: e.currentTarget.checked })}
+                  />
+                  <Button
+                    variant="subtle"
+                    color="red"
+                    size="xs"
+                    mt={4}
+                    onClick={() => setRows((cur) => cur.filter((_, j) => j !== i))}
+                  >
+                    Remove
+                  </Button>
+                </Group>
+              ))}
+              <Group gap="xs">
+                <Button variant="light" onClick={() => setRows((cur) => [...cur, emptyRow()])}>
+                  Add tool test
+                </Button>
+                <Button loading={running} onClick={() => void run()}>
+                  {running ? 'Running in a throwaway container...' : 'Run in lab'}
+                </Button>
+              </Group>
+            </Stack>
+          )}
+
+          <ErrorText error={error} />
+          {result && <Results result={result} />}
+        </Stack>
+      </Collapsible>
+    </Stack>
   );
 }

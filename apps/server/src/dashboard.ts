@@ -146,6 +146,7 @@ export async function buildDashboard(
          FROM sessions s
          JOIN projects p ON p.id = s.project_id
          LEFT JOIN providers pr ON pr.id = s.provider_id
+        WHERE s.kind = 'chat'
         ORDER BY s.id`,
     )
     .all() as unknown as SessionRow[];

@@ -210,6 +210,27 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
         default_model_id: 'TEXT',
       }),
   },
+  {
+    // Pi controls kept per session so a restarted pi process gets them back (thinking_level and
+    // auto_compaction are NULL until the user changes them), the kind of session ('chat', or 'lab'
+    // for the package lab's dedicated design session, which the session list hides), and saved
+    // package sets that can be applied to any project.
+    version: 9,
+    name: 'session pi controls, lab session kind and package sets',
+    up: (db) => {
+      addMissingColumns(db, 'sessions', {
+        thinking_level: 'TEXT',
+        auto_compaction: 'INTEGER',
+        kind: "TEXT NOT NULL DEFAULT 'chat'",
+      });
+      db.exec(`CREATE TABLE IF NOT EXISTS package_sets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        sources TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )`);
+    },
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {
