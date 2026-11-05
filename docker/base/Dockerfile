@@ -1,7 +1,7 @@
 # Base image for per-project sandboxes: Node with the pi coding agent preinstalled.
 # Mirrors the "plain Docker" recipe in pi's docs/containerization.md.
 # Node 24: current MCP reference servers require it, pi needs >= 22.19, and REA needs >= 22.23.4.
-FROM node:24-bookworm-slim
+FROM node:26-bookworm-slim
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash ca-certificates git ripgrep procps \
