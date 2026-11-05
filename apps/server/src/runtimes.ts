@@ -3,11 +3,13 @@ import { join } from 'node:path';
 import type { ContainerRuntime } from './runtime.js';
 import { createTar } from './tar.js';
 
-/** A runtime a project can run in. 'base' is the plain sandbox image; the rest are built from it. */
+/** A profile a project can run in. 'base' is the plain sandbox image; the rest are layered on it. */
 export interface RuntimeVariant {
   id: string;
   label: string;
   description: string;
+  /** The profile this one is built on; the sandbox image when omitted. */
+  parent?: string;
   /** What the agent is told it has; sandboxes are offline, so this says what cannot be installed. */
   note: string | null;
 }
@@ -18,40 +20,31 @@ const OFFLINE =
 export const RUNTIME_VARIANTS: readonly RuntimeVariant[] = [
   {
     id: 'base',
-    label: 'Node only',
+    label: 'Minimal',
     description: 'The plain sandbox: Node 24, git and ripgrep.',
     note: null,
   },
   {
     id: 'python',
-    label: 'Python',
+    label: 'Scripting',
     description: 'Python 3 with pip, venv and uv.',
     note: `Python 3, pip, venv and uv are installed. ${OFFLINE}`,
   },
   {
-    id: 'build',
-    label: 'C/C++ build tools',
-    description: 'gcc, g++, make, cmake and pkg-config.',
-    note: `gcc, g++, make, cmake and pkg-config are installed. ${OFFLINE}`,
-  },
-  {
-    id: 'go',
-    label: 'Go',
-    description: 'The Go toolchain, with the module cache in /workspace/.go.',
-    note: `Go is installed (its module cache is /workspace/.go). ${OFFLINE}`,
-  },
-  {
-    id: 'rust',
-    label: 'Rust',
+    id: 'native',
+    label: 'Native / reverse engineering',
     description:
-      'rustc and cargo (stable, minimal profile), with the cargo cache in /workspace/.cargo.',
-    note: `Rust (rustc and cargo) is installed. ${OFFLINE} Crates cannot be fetched.`,
+      'Scripting plus gcc, g++, make, cmake, pkg-config, gdb, nasm, file and xxd. Builds on Scripting.',
+    parent: 'python',
+    note: `Python 3 (pip, venv, uv), gcc, g++, make, cmake, pkg-config, gdb, nasm, binutils, file and xxd are installed. ${OFFLINE}`,
   },
   {
-    id: 'jvm',
-    label: 'Java',
-    description: 'A JDK 21 and Maven, with the repository in /workspace/.m2.',
-    note: `JDK 21 and Maven are installed. ${OFFLINE} Maven cannot resolve dependencies.`,
+    id: 'full',
+    label: 'Full',
+    description:
+      'Native plus Go, Rust (rustc, cargo) and a JDK 21 with Maven. Large. Builds on Native.',
+    parent: 'native',
+    note: `Python 3 (pip, venv, uv), gcc, g++, make, cmake, gdb, nasm, Go, Rust (rustc, cargo) and JDK 21 with Maven are installed. ${OFFLINE} Go modules, crates and Maven dependencies cannot be fetched.`,
   },
 ];
 
@@ -123,11 +116,22 @@ export class RuntimeBuilder {
   }
 
   async list(): Promise<RuntimeState[]> {
-    const base = await this.runtime.imageInfo(this.runtime.baseImage()).catch(() => null);
+    const infos = new Map(
+      await Promise.all(
+        RUNTIME_VARIANTS.map(
+          async (v) =>
+            [
+              v.id,
+              await this.runtime.imageInfo(imageFor(this.runtime, v.id)).catch(() => null),
+            ] as const,
+        ),
+      ),
+    );
     return Promise.all(
       RUNTIME_VARIANTS.map(async (v) => {
         const tag = imageFor(this.runtime, v.id);
-        const info = await this.runtime.imageInfo(tag).catch(() => null);
+        const info = infos.get(v.id) ?? null;
+        const base = infos.get(v.parent ?? BASE_RUNTIME) ?? null;
         const builtOn = info?.labels['org.pi-panel.base-id'];
         return {
           id: v.id,
@@ -149,30 +153,54 @@ export class RuntimeBuilder {
     );
   }
 
+  /**
+   * Builds a profile in the background. Profiles it is layered on that are missing are built first,
+   * in order, so one press on "Full" is enough.
+   */
   async start(id: string): Promise<void> {
     const variant = findRuntime(id);
     if (!variant || id === BASE_RUNTIME) throw new RuntimeBuildError(404, 'Unknown runtime');
     if (this.running) {
       throw new RuntimeBuildError(409, `A build is already running (${this.running})`);
     }
-    const base = await this.runtime.imageInfo(this.runtime.baseImage());
-    if (!base) {
+    if (!(await this.runtime.imageInfo(this.runtime.baseImage()))) {
       throw new RuntimeBuildError(
         409,
         'The base sandbox image is not built yet. Build it first (docker compose --profile build-only build sandbox-base).',
       );
     }
-    let dockerfile: Buffer;
-    try {
-      dockerfile = readFileSync(new URL(`${id}/Dockerfile`, this.opts.dir ?? RUNTIMES_DIR));
-    } catch {
-      throw new RuntimeBuildError(500, `The Dockerfile for ${variant.label} is missing`);
+    // Missing profiles this one is layered on, oldest first, then the profile itself.
+    const chain = [variant];
+    for (let v = variant; v.parent;) {
+      const parent = findRuntime(v.parent)!;
+      if (
+        parent.id === BASE_RUNTIME ||
+        (await this.runtime.imageInfo(imageFor(this.runtime, parent.id)))
+      )
+        break;
+      chain.unshift(parent);
+      v = parent;
+    }
+    const steps: { variant: RuntimeVariant; dockerfile: Buffer }[] = [];
+    for (const v of chain) {
+      try {
+        steps.push({
+          variant: v,
+          dockerfile: readFileSync(new URL(`${v.id}/Dockerfile`, this.opts.dir ?? RUNTIMES_DIR)),
+        });
+      } catch {
+        throw new RuntimeBuildError(500, `The Dockerfile for ${v.label} is missing`);
+      }
     }
     // Set synchronously, so a second request sees the build as running.
     this.running = id;
-    this.begin(id);
-    this.log(id, `Building ${imageFor(this.runtime, id)} on ${this.runtime.baseImage()}`);
-    void this.run(id, dockerfile, base.id);
+    for (const step of steps) {
+      this.begin(step.variant.id);
+      if (step.variant.id !== id) {
+        this.log(step.variant.id, `Building first, because ${variant.label} is layered on it`);
+      }
+    }
+    void this.runChain(steps);
   }
 
   /** The most recent logged build of this runtime, or null. */
@@ -218,27 +246,50 @@ export class RuntimeBuilder {
     }
   }
 
-  private async run(id: string, dockerfile: Buffer, baseId: string) {
+  private async runChain(steps: { variant: RuntimeVariant; dockerfile: Buffer }[]) {
     try {
+      for (let i = 0; i < steps.length; i++) {
+        const ok = await this.buildOne(steps[i]!.variant, steps[i]!.dockerfile);
+        if (!ok) {
+          // The profiles queued behind a failed one never started: say so instead of leaving them "building".
+          for (const later of steps.slice(i + 1)) {
+            this.log(later.variant.id, `Not built: ${steps[i]!.variant.label} failed first`);
+            this.builds.set(later.variant.id, {
+              ...this.buildOf(later.variant.id),
+              status: 'failed',
+              error: `${steps[i]!.variant.label} failed to build, so this was not attempted`,
+              finishedAt: Date.now(),
+            });
+          }
+          return;
+        }
+      }
+    } finally {
+      this.running = null;
+    }
+  }
+
+  private async buildOne(variant: RuntimeVariant, dockerfile: Buffer): Promise<boolean> {
+    const id = variant.id;
+    const parentTag = imageFor(this.runtime, variant.parent ?? BASE_RUNTIME);
+    try {
+      const parent = await this.runtime.imageInfo(parentTag);
+      if (!parent) throw new Error(`${parentTag} is not on this machine`);
+      this.log(id, `Building ${imageFor(this.runtime, id)} on ${parentTag}`);
       await this.runtime.buildImage({
         tag: imageFor(this.runtime, id),
         context: createTar([{ path: 'Dockerfile', content: dockerfile }]),
-        buildArgs: { BASE_IMAGE: this.runtime.baseImage(), BASE_ID: baseId },
+        buildArgs: { BASE_IMAGE: parentTag, BASE_ID: parent.id },
         onLog: (line) => this.log(id, line),
       });
       this.log(id, 'Image built');
       this.builds.set(id, { ...this.buildOf(id), status: 'done', finishedAt: Date.now() });
+      return true;
     } catch (err) {
       const error = err instanceof Error ? err.message : 'Build failed';
       this.log(id, `Failed: ${error}`);
-      this.builds.set(id, {
-        ...this.buildOf(id),
-        status: 'failed',
-        error,
-        finishedAt: Date.now(),
-      });
-    } finally {
-      this.running = null;
+      this.builds.set(id, { ...this.buildOf(id), status: 'failed', error, finishedAt: Date.now() });
+      return false;
     }
   }
 }

@@ -39,8 +39,8 @@ services:
     image: pi-panel/rea:6.8.0
     profiles: ['build-only']
 
-  # Runtime variants of the sandbox image (Python, Go, ...). Optional; projects pick one in their
-  # Runtime tab, which can also build them. Build the sandbox-base image first.
+  # Runtime profiles of the sandbox image. Optional; projects pick one in their Runtime tab, which
+  # can also build them. Each is layered on the one before it: sandbox-base, python, native, full.
   sandbox-python:
     build:
       context: ./docker/runtimes/python
@@ -48,31 +48,17 @@ services:
         BASE_IMAGE: pi-panel/sandbox-base:latest
     image: pi-panel/sandbox-python:latest
     profiles: ['build-only']
-  sandbox-build:
+  sandbox-native:
     build:
-      context: ./docker/runtimes/build
+      context: ./docker/runtimes/native
       args:
-        BASE_IMAGE: pi-panel/sandbox-base:latest
-    image: pi-panel/sandbox-build:latest
+        BASE_IMAGE: pi-panel/sandbox-python:latest
+    image: pi-panel/sandbox-native:latest
     profiles: ['build-only']
-  sandbox-go:
+  sandbox-full:
     build:
-      context: ./docker/runtimes/go
+      context: ./docker/runtimes/full
       args:
-        BASE_IMAGE: pi-panel/sandbox-base:latest
-    image: pi-panel/sandbox-go:latest
-    profiles: ['build-only']
-  sandbox-rust:
-    build:
-      context: ./docker/runtimes/rust
-      args:
-        BASE_IMAGE: pi-panel/sandbox-base:latest
-    image: pi-panel/sandbox-rust:latest
-    profiles: ['build-only']
-  sandbox-jvm:
-    build:
-      context: ./docker/runtimes/jvm
-      args:
-        BASE_IMAGE: pi-panel/sandbox-base:latest
-    image: pi-panel/sandbox-jvm:latest
+        BASE_IMAGE: pi-panel/sandbox-native:latest
+    image: pi-panel/sandbox-full:latest
     profiles: ['build-only']
