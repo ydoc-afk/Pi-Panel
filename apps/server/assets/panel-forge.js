@@ -18,6 +18,11 @@ export default function (pi) {
       'credentials. Commit your changes first (uncommitted changes are committed for you with the ' +
       'message, if given). Never run git push yourself: this sandbox has no credentials.',
     parameters: Type.Object({
+      repo: Type.Optional(
+        Type.String({
+          description: 'owner/name of the repository, needed only when several are included.',
+        }),
+      ),
       branch: Type.String({
         description: 'Branch to push, usually the output of `git branch --show-current`.',
       }),
@@ -32,6 +37,7 @@ export default function (pi) {
       const request = {
         branch: params.branch,
         ...(params.message ? { message: params.message } : {}),
+        ...(params.repo ? { repo: params.repo } : {}),
       };
       const answer = await ctx.ui.input(PUSH_DIALOG_TITLE, JSON.stringify(request));
       if (answer === undefined) {
@@ -73,6 +79,11 @@ export default function (pi) {
       "with the panel's own account only if they approve; you never handle credentials, and the " +
       "forge's HTTP API is not reachable with one from this sandbox, so do not try curl or node.",
     parameters: Type.Object({
+      repo: Type.Optional(
+        Type.String({
+          description: 'owner/name of the repository, needed only when several are included.',
+        }),
+      ),
       head: Type.String({ description: 'The pushed branch with your changes.' }),
       title: Type.String({ description: 'Pull request title.' }),
       body: Type.Optional(Type.String({ description: 'Pull request description (Markdown).' })),
@@ -85,6 +96,7 @@ export default function (pi) {
         throw new Error('No user interface is attached, so the pull request cannot be confirmed.');
       }
       const request = {
+        ...(params.repo ? { repo: params.repo } : {}),
         head: params.head,
         title: params.title,
         ...(params.body ? { body: params.body } : {}),

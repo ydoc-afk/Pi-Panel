@@ -1,10 +1,11 @@
 import { spawn } from 'node:child_process';
-import { lstat, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { SANDBOX_UID, workspaceDir } from './paths.js';
+import { addRepo, listRepos, pickFolder, type RepoRow } from './repo-store.js';
 import type { Secrets } from './secrets.js';
 
 export type ForgeKind = 'github' | 'forgejo';
@@ -62,8 +63,6 @@ interface Account {
 
 interface ProjectRow {
   id: number;
-  repo: string | null;
-  repo_host: string | null;
 }
 
 /** Parses owner/name, or a full repository URL on `webBase`. */
@@ -296,25 +295,28 @@ export class GitHubService {
   }
 
   // ---- project operations ------------------------------------------------------------------
+  //
+  // A project can hold several repositories (project_repos). The methods without a repository
+  // argument act on the project's first one, and are what /api/projects/:id/github|forgejo uses.
 
   async status(projectId: number) {
-    const project = this.project(projectId);
-    if (!project.repo) return { repo: null, branch: null, changes: 0, ahead: null };
-    if (this.otherHost(project)) {
-      return {
-        repo: null,
-        branch: null,
-        changes: 0,
-        ahead: null,
-        linkedTo: project.repo_host ?? 'github',
-      };
+    this.project(projectId);
+    const first = listRepos(this.db, projectId)[0];
+    if (!first) return { repo: null, branch: null, changes: 0, ahead: null };
+    if (first.host !== this.kind) {
+      return { repo: null, branch: null, changes: 0, ahead: null, linkedTo: first.host };
     }
+    return { repo: first.repo, ...(await this.statusOf(projectId, first)) };
+  }
+
+  /** Branch, uncommitted changes and unpublished commits of one repository. */
+  async statusOf(projectId: number, row: RepoRow) {
     return this.exclusive(projectId, async () => {
-      const dir = await this.safeRepoDir(projectId);
+      const dir = await this.safeRepoDir(projectId, row.folder);
       const branch = (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() || null;
       const changes = await this.changeCount(dir);
-      const ahead = branch ? await this.commitsAhead(dir, project.repo!, branch) : null;
-      return { repo: project.repo, branch, changes, ahead };
+      const ahead = branch ? await this.commitsAhead(dir, row.repo, branch) : null;
+      return { branch, changes, ahead };
     });
   }
 
@@ -342,9 +344,29 @@ export class GitHubService {
     }
   }
 
+  /** Clones into the workspace root, which must be empty. Only for a project with no repository yet. */
   async clone(projectId: number, repoInput: unknown, branchInput?: unknown) {
-    const project = this.project(projectId);
-    if (project.repo) throw new GitHubError(409, 'Project is already linked to a repository');
+    this.project(projectId);
+    if (listRepos(this.db, projectId).length > 0) {
+      throw new GitHubError(409, 'Project is already linked to a repository');
+    }
+    const row = await this.cloneRepo(projectId, repoInput, branchInput, '');
+    return { repo: row.repo, branch: row.branch };
+  }
+
+  /**
+   * Clones a repository and records it. folder is where, relative to the workspace: '' is the
+   * workspace root (which must be empty), undefined picks a new folder named after the repository.
+   * A repository added next to one that lives at the root is hidden from the root repository's git
+   * status through its local .git/info/exclude, so committing the root repository never sweeps it up.
+   */
+  async cloneRepo(
+    projectId: number,
+    repoInput: unknown,
+    branchInput?: unknown,
+    folder?: string,
+  ): Promise<RepoRow & { branch: string }> {
+    this.project(projectId);
     const account = this.kind === 'forgejo' ? this.requireAccount() : this.optionalAccount();
     const repo = parseRepo(repoInput, this.kind, account?.webBase);
     const branch =
@@ -352,8 +374,22 @@ export class GitHubService {
         ? undefined
         : await this.branchName(branchInput);
     return this.exclusive(projectId, async () => {
-      const dir = workspaceDir(this.dataDir, projectId);
-      if ((await readdir(dir)).length > 0) throw new GitHubError(409, 'Workspace is not empty');
+      const existing = listRepos(this.db, projectId);
+      if (
+        existing.some((r) => r.host === this.kind && r.repo.toLowerCase() === repo.toLowerCase())
+      ) {
+        throw new GitHubError(409, `${repo} is already part of this project`);
+      }
+      const workspace = workspaceDir(this.dataDir, projectId);
+      const entries = await readdir(workspace);
+      const where = folder ?? pickFolder(repo, [...entries, ...existing.map((r) => r.folder)]);
+      if (where === '') {
+        if (entries.length > 0) throw new GitHubError(409, 'Workspace is not empty');
+      } else {
+        // A fresh folder, made by us: the agent cannot have put a symlink there for git to follow.
+        await mkdir(join(workspace, where));
+      }
+      const dir = where === '' ? workspace : join(workspace, where);
       try {
         await this.git(
           dir,
@@ -367,22 +403,32 @@ export class GitHubService {
           { account, timeoutMs: 10 * 60_000 },
         );
       } catch (err) {
-        // Leave the workspace empty so the clone can be retried.
-        for (const entry of await readdir(dir))
-          await rm(join(dir, entry), { recursive: true, force: true });
+        // Leave nothing behind so the clone can be retried.
+        if (where === '') {
+          for (const entry of await readdir(dir))
+            await rm(join(dir, entry), { recursive: true, force: true });
+        } else {
+          await rm(dir, { recursive: true, force: true });
+        }
         throw err;
       }
-      this.db
-        .prepare('UPDATE projects SET repo = ?, repo_host = ? WHERE id = ?')
-        .run(repo, this.kind === 'github' ? null : this.kind, projectId);
-      return { repo, branch: (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() };
+      const row = addRepo(this.db, projectId, this.kind, repo, where);
+      const root = existing.find((r) => r.folder === '');
+      if (where !== '' && root) {
+        await appendFile(join(workspace, '.git', 'info', 'exclude'), `/${where}/\n`).catch(
+          () => undefined,
+        );
+      }
+      return { ...row, branch: (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim() };
     });
   }
 
   async push(projectId: number, branchInput: unknown, messageInput?: unknown) {
-    const project = this.project(projectId);
-    if (!project.repo) throw new GitHubError(409, 'Project has no linked repository');
-    this.assertHost(project);
+    return this.pushRepo(projectId, this.firstRepo(projectId), branchInput, messageInput);
+  }
+
+  async pushRepo(projectId: number, row: RepoRow, branchInput: unknown, messageInput?: unknown) {
+    this.assertKind(row);
     const account = this.requireAccount();
     const branch = await this.branchName(branchInput);
     const message =
@@ -391,7 +437,7 @@ export class GitHubService {
       throw new GitHubError(400, 'message must be a string up to 5000 characters');
     }
     return this.exclusive(projectId, async () => {
-      const dir = await this.safeRepoDir(projectId);
+      const dir = await this.safeRepoDir(projectId, row.folder);
       await this.git(dir, ['switch', '-C', branch], { account });
       await this.git(dir, ['add', '-A'], { account });
       let committed = false;
@@ -404,13 +450,42 @@ export class GitHubService {
         [
           'push',
           '--porcelain',
-          `${account.webBase}/${project.repo}.git`,
+          `${account.webBase}/${row.repo}.git`,
           `refs/heads/${branch}:refs/heads/${branch}`,
         ],
         { account, timeoutMs: 5 * 60_000, failStatus: 409, failPrefix: 'Push failed' },
       );
       const sha = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
-      return { repo: project.repo, branch, commit: sha, committed };
+      return { repo: row.repo, branch, commit: sha, committed };
+    });
+  }
+
+  /**
+   * Brings the repository's current branch up to date with the remote. Fast-forward only, so it
+   * never creates a merge or touches work the agent has not committed: a branch that has diverged
+   * is reported, not merged.
+   */
+  async pullRepo(projectId: number, row: RepoRow) {
+    this.assertKind(row);
+    const account = this.requireAccount();
+    return this.exclusive(projectId, async () => {
+      const dir = await this.safeRepoDir(projectId, row.folder);
+      const branch = (await this.git(dir, ['symbolic-ref', '--short', 'HEAD'])).trim();
+      if (!branch) throw new GitHubError(409, 'The repository is not on a branch');
+      const before = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+      await this.git(
+        dir,
+        [
+          'pull',
+          '--ff-only',
+          '--no-rebase',
+          `${account.webBase}/${row.repo}.git`,
+          `refs/heads/${branch}`,
+        ],
+        { account, timeoutMs: 5 * 60_000, failStatus: 409, failPrefix: 'Pull failed' },
+      );
+      const after = (await this.git(dir, ['rev-parse', 'HEAD'])).trim();
+      return { repo: row.repo, branch, commit: after, updated: before !== after };
     });
   }
 
@@ -418,9 +493,15 @@ export class GitHubService {
     projectId: number,
     input: { head?: unknown; title?: unknown; body?: unknown; base?: unknown },
   ) {
-    const project = this.project(projectId);
-    if (!project.repo) throw new GitHubError(409, 'Project has no linked repository');
-    this.assertHost(project);
+    return this.pullRequestFor(projectId, this.firstRepo(projectId), input);
+  }
+
+  async pullRequestFor(
+    projectId: number,
+    row: RepoRow,
+    input: { head?: unknown; title?: unknown; body?: unknown; base?: unknown },
+  ) {
+    this.assertKind(row);
     const account = this.requireAccount();
     const head = await this.branchName(input.head);
     if (typeof input.title !== 'string' || !input.title.trim() || input.title.length > 256) {
@@ -433,7 +514,7 @@ export class GitHubService {
     if (input.base === undefined || input.base === '') {
       const info = await this.api<{ default_branch?: string }>(
         'GET',
-        `/repos/${project.repo}`,
+        `/repos/${row.repo}`,
         account.token,
         undefined,
         this.kind === 'forgejo' ? this.account().baseUrl : undefined,
@@ -446,7 +527,7 @@ export class GitHubService {
     }
     const pr = await this.api<{ html_url?: string; number?: number }>(
       'POST',
-      `/repos/${project.repo}/pulls`,
+      `/repos/${row.repo}/pulls`,
       account.token,
       { title: input.title.trim(), head, base, body: input.body ?? '' },
       this.kind === 'forgejo' ? this.account().baseUrl : undefined,
@@ -458,22 +539,25 @@ export class GitHubService {
   // ---- internals ---------------------------------------------------------------------------
 
   private project(id: number): ProjectRow {
-    const row = this.db.prepare('SELECT id, repo, repo_host FROM projects WHERE id = ?').get(id) as
+    const row = this.db.prepare('SELECT id FROM projects WHERE id = ?').get(id) as
       ProjectRow | undefined;
     if (!row) throw new GitHubError(404, 'Project not found');
     return row;
   }
 
-  /** True when the project's repository lives on the other forge. */
-  private otherHost(project: ProjectRow): boolean {
-    return !!project.repo && (project.repo_host ?? 'github') !== this.kind;
+  /** The project's first repository, for the methods and routes that predate several per project. */
+  private firstRepo(projectId: number): RepoRow {
+    this.project(projectId);
+    const first = listRepos(this.db, projectId)[0];
+    if (!first) throw new GitHubError(409, 'Project has no linked repository');
+    return first;
   }
 
-  private assertHost(project: ProjectRow) {
-    if (this.otherHost(project)) {
+  private assertKind(row: RepoRow) {
+    if (row.host !== this.kind) {
       throw new GitHubError(
         409,
-        `Project is linked to a ${project.repo_host === 'forgejo' ? 'Forgejo' : 'GitHub'} repository, not ${this.label}`,
+        `${row.repo} is a ${row.host === 'forgejo' ? 'Forgejo' : 'GitHub'} repository, not ${this.label}`,
       );
     }
   }
@@ -514,8 +598,15 @@ export class GitHubService {
    * The sandbox agent controls everything inside the workspace, including .git. Before running git
    * there, require a real .git directory with no alternates and only allow-listed config keys.
    */
-  private async safeRepoDir(projectId: number): Promise<string> {
-    const dir = workspaceDir(this.dataDir, projectId);
+  private async safeRepoDir(projectId: number, folder = ''): Promise<string> {
+    const workspace = workspaceDir(this.dataDir, projectId);
+    const dir = folder === '' ? workspace : join(workspace, folder);
+    if (folder !== '') {
+      const info = await lstat(dir).catch(() => null);
+      if (!info?.isDirectory()) {
+        throw new GitHubError(409, `The folder ${folder} is missing or is not a regular directory`);
+      }
+    }
     const gitDir = join(dir, '.git');
     const info = await lstat(gitDir).catch(() => null);
     if (!info?.isDirectory()) {

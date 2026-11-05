@@ -11,6 +11,8 @@
 export const PUSH_DIALOG_TITLE = '@pi-panel/push';
 
 export interface PushRequest {
+  /** owner/name, needed only when several repositories are included. */
+  repo?: string;
   branch: string;
   message?: string;
 }
@@ -26,6 +28,8 @@ export interface PushOutcome {
 export const PR_DIALOG_TITLE = '@pi-panel/pull-request';
 
 export interface PullRequestRequest {
+  /** owner/name, needed only when several repositories are included. */
+  repo?: string;
   /** Branch with the changes; it must already be pushed. */
   head: string;
   title: string;
@@ -43,8 +47,12 @@ export interface PullRequestOutcome {
 
 /** What the session manager needs from the GitHub/Forgejo services. */
 export interface ForgePusher {
-  /** Name of the forge and repository the project is linked to, or null when it has none. */
-  link(projectId: number): { forge: 'GitHub' | 'Forgejo'; repo: string } | null;
+  /**
+   * The forge and repository a request means: the one it names, or the only included one. null when
+   * the project has none; throws an Error with a message for the agent when the request is
+   * ambiguous or names a repository that is not included.
+   */
+  link(projectId: number, repo?: string): { forge: 'GitHub' | 'Forgejo'; repo: string } | null;
   push(projectId: number, request: PushRequest): Promise<PushOutcome>;
   /** Opens a pull request with the account's token, which the agent never sees. */
   pullRequest?(projectId: number, request: PullRequestRequest): Promise<PullRequestOutcome>;
@@ -60,10 +68,15 @@ export function parsePushRequest(raw: unknown): PushRequest | null {
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const { branch, message } = data as { branch?: unknown; message?: unknown };
+  const { branch, message, repo } = data as {
+    branch?: unknown;
+    message?: unknown;
+    repo?: unknown;
+  };
   if (typeof branch !== 'string' || !branch || branch.length > 200) return null;
   if (message !== undefined && (typeof message !== 'string' || message.length > 5000)) return null;
-  return { branch, ...(message ? { message } : {}) };
+  if (repo !== undefined && (typeof repo !== 'string' || repo.length > 200)) return null;
+  return { branch, ...(message ? { message } : {}), ...(repo ? { repo } : {}) };
 }
 
 /** The sentence the user is asked to approve, built only from the panel's own knowledge. */
@@ -84,12 +97,19 @@ export function parsePullRequestRequest(raw: unknown): PullRequestRequest | null
     return null;
   }
   if (!data || typeof data !== 'object') return null;
-  const { head, title, body, base } = data as Record<string, unknown>;
+  const { head, title, body, base, repo } = data as Record<string, unknown>;
   if (typeof head !== 'string' || !head || head.length > 200) return null;
   if (typeof title !== 'string' || !title.trim() || title.length > 256) return null;
   if (body !== undefined && (typeof body !== 'string' || body.length > 65_536)) return null;
   if (base !== undefined && (typeof base !== 'string' || base.length > 200)) return null;
-  return { head, title, ...(body ? { body } : {}), ...(base ? { base } : {}) };
+  if (repo !== undefined && (typeof repo !== 'string' || repo.length > 200)) return null;
+  return {
+    head,
+    title,
+    ...(body ? { body } : {}),
+    ...(base ? { base } : {}),
+    ...(repo ? { repo } : {}),
+  };
 }
 
 /** The sentence the user is asked to approve for a pull request. */

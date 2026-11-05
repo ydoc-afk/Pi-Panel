@@ -76,7 +76,7 @@ _Review registrations in the Users tab (light theme)._
 _One sandboxed container per project (dark theme)._
 
 ![A session](docs/screenshots/session-dark.png)
-_Sessions open next to the project's session list, with GitHub, MCP, packages and the lab in tabs._
+_Sessions open next to the project's session list, with repositories, MCP, packages, the lab and the runtime in tabs._
 
 ![Providers](docs/screenshots/providers-dark.png)
 _Providers, with Test connection and model discovery._

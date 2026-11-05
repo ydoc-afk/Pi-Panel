@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { agentNote } from './agent-note.js';
+import { listRepos } from './repo-store.js';
 import { runtimeNote } from './runtimes.js';
 import {
   PR_DIALOG_TITLE,
@@ -376,15 +377,15 @@ export class SessionManager {
     await write('mcp.json', mcp.config);
     // AGENTS.md in the agent dir is pi's global context. Removed when the project has no repository,
     // so unlinking one does not leave stale instructions behind.
-    const link = this.db
-      .prepare('SELECT repo, repo_host, applied_runtime FROM projects WHERE id = ?')
-      .get(projectId) as
-      { repo: string | null; repo_host: string | null; applied_runtime: string } | undefined;
+    const repos = listRepos(this.db, projectId);
+    const runtime = this.db
+      .prepare('SELECT applied_runtime FROM projects WHERE id = ?')
+      .get(projectId) as { applied_runtime: string } | undefined;
     const note = agentNote(
-      link?.repo ?? null,
-      link?.repo_host ?? null,
+      repos.map((r) => ({ repo: r.repo, host: r.host, folder: r.folder, included: r.included })),
+      null,
       // The container's runtime, not the one chosen for the next recreate.
-      link ? runtimeNote(link.applied_runtime) : null,
+      runtime ? runtimeNote(runtime.applied_runtime) : null,
     );
     const extension = join(dir, 'extensions', 'panel-forge.js');
     if (note) {
@@ -394,8 +395,8 @@ export class SessionManager {
     } else {
       await rm(join(dir, 'AGENTS.md'), { force: true });
     }
-    if (link?.repo) {
-      // The push tool the note refers to: installed only where there is a repository to push to.
+    if (repos.some((r) => r.included)) {
+      // The push tools the note refers to: installed only where there is a repository to push to.
       await mkdir(join(dir, 'extensions'), { recursive: true });
       await writeFile(extension, await readFile(FORGE_EXTENSION), { mode: 0o644 });
     } else {
@@ -549,7 +550,12 @@ export class SessionManager {
     if (!request) return refuse(`The ${what} request was malformed.`);
     const row = this.db.prepare('SELECT project_id FROM sessions WHERE id = ?').get(id) as
       { project_id: number } | undefined;
-    const link = row ? this.pusher?.link(row.project_id) : null;
+    let link: ReturnType<ForgePusher['link']>;
+    try {
+      link = row ? (this.pusher?.link(row.project_id, request.repo) ?? null) : null;
+    } catch (err) {
+      return refuse(err instanceof Error ? err.message : 'That repository cannot be used.');
+    }
     if (!link) return refuse('This project is not linked to a GitHub or Forgejo repository.');
     if (kind === 'pr' && !this.pusher?.pullRequest) {
       return refuse('Opening pull requests is unavailable.');

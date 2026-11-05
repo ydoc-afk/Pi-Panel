@@ -22,6 +22,7 @@ import { PackageService, registerPackages, type PackageOptions } from './package
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerMcpRegistry } from './mcp-registry.js';
 import { ReaBuilder, ReaBuildError } from './rea-build.js';
+import { RepoService, registerRepos } from './repos.js';
 import { RuntimeBuilder, RuntimeBuildError } from './runtimes.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
@@ -90,27 +91,11 @@ export function buildApp(opts: AppOptions = {}) {
   const limits = { ...DEFAULT_LIMITS, ...opts.samples };
   const samples = new SamplesService(db, dataDir, limits);
   const sidecars = new SidecarManager(db, mcpStore, runtime, dataDir, opts.sidecars);
+  const repos = new RepoService(db, { github, forgejo });
   const pusher: ForgePusher = opts.agentPush ?? {
-    link(projectId) {
-      const p = db.prepare('SELECT repo, repo_host FROM projects WHERE id = ?').get(projectId) as
-        { repo: string | null; repo_host: string | null } | undefined;
-      if (!p?.repo) return null;
-      return { forge: p.repo_host === 'forgejo' ? 'Forgejo' : 'GitHub', repo: p.repo };
-    },
-    push(projectId, request) {
-      const p = db.prepare('SELECT repo_host FROM projects WHERE id = ?').get(projectId) as
-        { repo_host: string | null } | undefined;
-      return (p?.repo_host === 'forgejo' ? forgejo : github).push(
-        projectId,
-        request.branch,
-        request.message,
-      );
-    },
-    pullRequest(projectId, request) {
-      const p = db.prepare('SELECT repo_host FROM projects WHERE id = ?').get(projectId) as
-        { repo_host: string | null } | undefined;
-      return (p?.repo_host === 'forgejo' ? forgejo : github).pullRequest(projectId, request);
-    },
+    link: (projectId, repo) => repos.forgeLink(projectId, repo),
+    push: (projectId, request) => repos.agentPush(projectId, request),
+    pullRequest: (projectId, request) => repos.agentPullRequest(projectId, request),
   };
   const sessions = new SessionManager(
     db,
@@ -155,6 +140,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerProviders(app, providers);
     registerGitHub(app, github);
     registerGitHub(app, forgejo, 'forgejo');
+    registerRepos(app, repos);
     registerPackages(app, packages);
     registerLab(app, lab);
     registerMcp(app, mcp);

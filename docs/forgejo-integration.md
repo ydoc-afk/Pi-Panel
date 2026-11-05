@@ -17,8 +17,8 @@ per-project lock, redaction of errors).
 - **Cloning needs an account**, since the instance address lives with the account.
 - **Auth.** The API gets `Authorization: token <PAT>`; git gets Basic auth as `<login>:<PAT>`.
 - **Commit identity.** `<id>+<login>@noreply.<instance host>`, Forgejo's default no-reply format.
-- **One forge per project.** A project is linked to either GitHub or Forgejo (`projects.repo_host`,
-  NULL meaning GitHub). The other forge's tab reports the link and refuses to push.
+- **Both forges in one project.** A project can hold repositories from GitHub and Forgejo together
+  (see [Repositories](repositories.md)); each one is pushed with its own forge's account.
 
 ## Token permissions
 

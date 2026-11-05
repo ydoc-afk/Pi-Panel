@@ -13,6 +13,7 @@ import {
 import { buildApp } from './app.js';
 import { openDb } from './db.js';
 import { agentDir } from './paths.js';
+import { addRepo } from './repo-store.js';
 import { FakeRuntime } from './runtime.js';
 
 describe('parsePushRequest', () => {
@@ -403,13 +404,11 @@ describe('push tool installation', () => {
 
     await start();
     expect(existsSync(file)).toBe(false);
-    db.prepare("UPDATE projects SET repo = 'o/r', repo_host = 'forgejo' WHERE id = ?").run(
-      project.id,
-    );
+    addRepo(db, project.id, 'forgejo', 'o/r', '');
     await start();
     expect(readFileSync(file, 'utf8')).toContain("name: 'push_to_repo'");
     expect(readFileSync(file, 'utf8')).toContain("name: 'open_pull_request'");
-    db.prepare('UPDATE projects SET repo = NULL, repo_host = NULL WHERE id = ?').run(project.id);
+    db.prepare('DELETE FROM project_repos WHERE project_id = ?').run(project.id);
     await start();
     expect(existsSync(file)).toBe(false);
     await app.close();
