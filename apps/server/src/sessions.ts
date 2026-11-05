@@ -708,6 +708,8 @@ export class SessionManager {
     }
     // What the user sees: the panel's wording, shown as a plain yes/no question.
     event.method = 'confirm';
+    // Approving acts under the admin's forge account; the UI shows members only the decline button.
+    event.panelAdminOnly = true;
     delete event.placeholder;
     if (kind === 'pr') {
       event.title = `Open a pull request on ${link.forge}?`;

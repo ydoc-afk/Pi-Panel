@@ -95,6 +95,7 @@ interface Ev {
   title?: string;
   message?: unknown;
   placeholder?: string;
+  panelAdminOnly?: boolean;
 }
 
 describe('push_to_repo through the session dialog', () => {
@@ -177,6 +178,7 @@ describe('push_to_repo through the session dialog', () => {
 
     const d = (await dialog())!;
     expect(d.title).toBe('Push to Forgejo?');
+    expect(d.panelAdminOnly).toBe(true); // the UI shows members only the decline button
     expect(d.message).toContain('branch "main" to Forgejo repository codyw/Rufus_Decomp');
     expect(d.placeholder).toBeUndefined(); // the agent's JSON is not shown or stored
     expect(pushImpl).not.toHaveBeenCalled();

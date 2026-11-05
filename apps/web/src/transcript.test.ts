@@ -146,6 +146,20 @@ describe('transcript', () => {
       expect(cleared.ui.widgets).toEqual({});
     });
 
+    it('marks a dialog only the admin may approve', () => {
+      const t = feed([
+        {
+          type: 'extension_ui_request',
+          id: 'p1',
+          method: 'confirm',
+          title: 'Push?',
+          panelAdminOnly: true,
+        },
+        { type: 'extension_ui_request', id: 'p2', method: 'confirm', title: 'Delete?' },
+      ]);
+      expect(t.ui.dialogs.map((d) => d.adminOnly)).toEqual([true, undefined]);
+    });
+
     it('opens a dialog until it is resolved, and forgets everything on reset', () => {
       const open = feed([
         req({ id: 'q1', method: 'select', title: 'Pick', options: ['A', 'B', 3] }),
