@@ -1,7 +1,7 @@
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { agentNote } from './agent-note.js';
 import { listRepos } from './repo-store.js';
 import { runtimeNote } from './runtimes.js';
@@ -601,6 +601,7 @@ export class SessionManager {
   async respondUi(
     id: number,
     body: { id?: unknown; value?: unknown; confirmed?: unknown; cancelled?: unknown },
+    asAdmin = true,
   ) {
     this.row(id);
     const requestId = body.id;
@@ -626,6 +627,10 @@ export class SessionManager {
       // Only yes or no is meaningful here; the outcome of an approved action goes back to the agent.
       if (typeof body.confirmed !== 'boolean' && body.cancelled !== true) {
         throw new SessionError(400, 'Answer with confirmed or cancelled');
+      }
+      // Approving acts under the admin's forge account, so only the admin may; anyone can decline.
+      if (body.confirmed === true && !asAdmin) {
+        throw new SessionError(403, 'Only the admin can approve pushes and pull requests');
       }
       if (body.confirmed === true) {
         entry.busy = true;
@@ -688,7 +693,12 @@ async function handle<T>(reply: FastifyReply, fn: () => Promise<T> | T) {
   }
 }
 
-export function registerSessions(app: FastifyInstance, manager: SessionManager) {
+export function registerSessions(
+  app: FastifyInstance,
+  manager: SessionManager,
+  /** Whether the request comes from the admin; members cannot approve pushes and pull requests. */
+  isAdmin: (req: FastifyRequest) => boolean = () => false,
+) {
   const num = (s: string) => (/^\d+$/.test(s) ? Number(s) : -1);
 
   app.get<{ Params: { id: string } }>('/api/projects/:id/sessions', async (req) => ({
@@ -778,7 +788,11 @@ export function registerSessions(app: FastifyInstance, manager: SessionManager) 
 
   app.post<{ Params: { id: string } }>('/api/sessions/:id/ui-response', (req, reply) =>
     handle(reply, async () => {
-      await manager.respondUi(num(req.params.id), (req.body ?? {}) as Record<string, unknown>);
+      await manager.respondUi(
+        num(req.params.id),
+        (req.body ?? {}) as Record<string, unknown>,
+        isAdmin(req),
+      );
       return { ok: true };
     }),
   );

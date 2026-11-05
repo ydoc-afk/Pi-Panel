@@ -415,3 +415,123 @@ describe('push tool installation', () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 });
+
+describe('who may approve a push or pull request', () => {
+  it('is the admin only; a member can decline but not approve', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'pp-approve-'));
+    const pushImpl = vi.fn(async () => ({
+      repo: 'o/r',
+      branch: 'main',
+      commit: 'abc1234',
+      committed: false,
+    }));
+    const app = buildApp({
+      db: openDb(':memory:'),
+      runtime: new FakeRuntime(),
+      dataDir,
+      agentPush: { link: () => ({ forge: 'Forgejo', repo: 'o/r' }), push: pushImpl },
+    });
+    const PW = 'correct-horse-battery';
+    const setup = await app.inject({
+      method: 'POST',
+      url: '/api/auth/setup',
+      payload: { username: 'admin', password: PW },
+    });
+    const admin = {
+      cookie: `pp_session=${setup.cookies.find((c) => c.name === 'pp_session')!.value}`,
+    };
+    await app.inject({
+      method: 'POST',
+      url: '/api/auth/register',
+      payload: { username: 'sam', password: 'member-password-1' },
+    });
+    const users = (await app.inject({ url: '/api/admin/users', headers: admin })).json() as {
+      id: number;
+      username: string;
+    }[];
+    await app.inject({
+      method: 'POST',
+      url: `/api/admin/users/${users.find((u) => u.username === 'sam')!.id}/approve`,
+      headers: admin,
+      payload: {},
+    });
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: 'sam', password: 'member-password-1' },
+    });
+    const member = {
+      cookie: `pp_session=${login.cookies.find((c) => c.name === 'pp_session')!.value}`,
+    };
+
+    const project = (
+      await app.inject({
+        method: 'POST',
+        url: '/api/projects',
+        headers: admin,
+        payload: { name: 'p' },
+      })
+    ).json().project;
+    const session = (
+      await app.inject({
+        method: 'POST',
+        url: `/api/projects/${project.id}/sessions`,
+        headers: admin,
+        payload: {},
+      })
+    ).json().session;
+    const events = async () =>
+      (
+        (await app.inject({ url: `/api/sessions/${session.id}/events`, headers: admin })).json()
+          .events as { event: { type?: string; method?: string; id?: string } }[]
+      ).map((e) => e.event);
+    const until = async (cond: () => Promise<boolean>) => {
+      for (let i = 0; i < 400; i++) {
+        if (await cond()) return;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      throw new Error('timed out');
+    };
+    const respond = (headers: { cookie: string }, body: Record<string, unknown>) =>
+      app.inject({
+        method: 'POST',
+        url: `/api/sessions/${session.id}/ui-response`,
+        headers,
+        payload: body,
+      });
+
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/prompt`,
+      headers: admin,
+      payload: { message: '/push {"branch":"main"}' },
+    });
+    await until(async () => (await events()).some((e) => e.method === 'confirm'));
+    const id = (await events()).find((e) => e.method === 'confirm')!.id;
+
+    const approved = await respond(member, { id, confirmed: true });
+    expect(approved.statusCode).toBe(403);
+    expect(approved.json().error).toBe('Only the admin can approve pushes and pull requests');
+    expect(pushImpl).not.toHaveBeenCalled();
+
+    // The question is still open for the admin.
+    expect((await respond(admin, { id, confirmed: true })).statusCode).toBe(200);
+    expect(pushImpl).toHaveBeenCalledTimes(1);
+
+    // A member may say no.
+    await until(async () => (await events()).some((e) => e.type === 'agent_settled'));
+    await app.inject({
+      method: 'POST',
+      url: `/api/sessions/${session.id}/prompt`,
+      headers: admin,
+      payload: { message: '/push {"branch":"main"}' },
+    });
+    await until(async () => (await events()).filter((e) => e.method === 'confirm').length === 2);
+    const second = (await events()).filter((e) => e.method === 'confirm')[1]!.id;
+    expect((await respond(member, { id: second, confirmed: false })).statusCode).toBe(200);
+    expect(pushImpl).toHaveBeenCalledTimes(1);
+
+    await app.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+});
