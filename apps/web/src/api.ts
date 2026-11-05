@@ -195,16 +195,6 @@ export interface GitHubAccount {
   baseUrl?: string;
 }
 
-export interface RepoStatus {
-  repo: string | null;
-  branch: string | null;
-  changes: number;
-  /** Commits on the branch the remote does not have yet; null when that could not be determined. */
-  ahead: number | null;
-  /** Set when the project's repository lives on the other forge. */
-  linkedTo?: Forge;
-}
-
 export const getGitHub = (forge: Forge = 'github') => request<GitHubAccount>(`/api/${forge}`);
 export const connectGitHub = (token: string, forge: Forge = 'github', baseUrl?: string) =>
   request<GitHubAccount>(`/api/${forge}`, send('PUT', { token, ...(baseUrl ? { baseUrl } : {}) }));
@@ -265,37 +255,74 @@ export interface ReaState {
 export const getRea = () => request<ReaState>('/api/rea');
 export const buildRea = (ghidraUrl: string, ghidraSha256: string) =>
   request<ReaState>('/api/rea/build', send('POST', { ghidraUrl, ghidraSha256 }));
-export const getRepoStatus = (projectId: number, forge: Forge = 'github') =>
-  request<RepoStatus>(`/api/projects/${projectId}/${forge}`);
-export const cloneRepo = (
-  projectId: number,
-  repo: string,
-  branch?: string,
-  forge: Forge = 'github',
-) =>
-  request<{ repo: string; branch: string }>(
-    `/api/projects/${projectId}/${forge}/clone`,
-    send('POST', { repo, ...(branch ? { branch } : {}) }),
+export interface ProjectRepo {
+  id: number;
+  host: Forge;
+  repo: string;
+  /** Where it is inside the sandbox. */
+  path: string;
+  included: boolean;
+  branch: string | null;
+  changes: number;
+  ahead: number | null;
+  error?: string;
+}
+export interface RepoList {
+  repos: ProjectRepo[];
+  accounts: Record<Forge, boolean>;
+}
+export interface BulkRepoResult {
+  id: number;
+  repo: string;
+  ok: boolean;
+  error?: string;
+  branch?: string;
+  committed?: boolean;
+  updated?: boolean;
+}
+const repos = (projectId: number) => `/api/projects/${projectId}/repos`;
+export const listRepos = (projectId: number) => request<RepoList>(repos(projectId));
+export const addRepo = (projectId: number, host: Forge, repo: string, branch?: string) =>
+  request<{ id: number; path: string; branch: string }>(
+    repos(projectId),
+    send('POST', { host, repo, ...(branch ? { branch } : {}) }),
   );
-export const pushBranch = (
-  projectId: number,
-  branch: string,
-  message?: string,
-  forge: Forge = 'github',
-) =>
+export const setRepoIncluded = (projectId: number, repoId: number, included: boolean) =>
+  request<{ id: number; included: boolean }>(
+    `${repos(projectId)}/${repoId}`,
+    send('PATCH', { included }),
+  );
+export const removeRepo = (projectId: number, repoId: number) =>
+  request<void>(`${repos(projectId)}/${repoId}`, { method: 'DELETE' });
+export const pullRepo = (projectId: number, repoId: number) =>
+  request<{ branch: string; updated: boolean }>(
+    `${repos(projectId)}/${repoId}/pull`,
+    send('POST', {}),
+  );
+export const pushRepo = (projectId: number, repoId: number, branch: string, message?: string) =>
   request<{ branch: string; commit: string; committed: boolean }>(
-    `/api/projects/${projectId}/${forge}/push`,
+    `${repos(projectId)}/${repoId}/push`,
     send('POST', { branch, ...(message ? { message } : {}) }),
   );
-export const openPullRequest = (
+export const openRepoPullRequest = (
   projectId: number,
+  repoId: number,
   input: { head: string; title: string; body?: string },
-  forge: Forge = 'github',
 ) =>
   request<{ url: string; number: number | null; base: string }>(
-    `/api/projects/${projectId}/${forge}/pr`,
+    `${repos(projectId)}/${repoId}/pr`,
     send('POST', input),
   );
+export const pullAllRepos = async (projectId: number) =>
+  (await request<{ results: BulkRepoResult[] }>(`${repos(projectId)}/pull`, send('POST', {})))
+    .results;
+export const pushAllRepos = async (projectId: number, message?: string) =>
+  (
+    await request<{ results: BulkRepoResult[] }>(
+      `${repos(projectId)}/push`,
+      send('POST', message ? { message } : {}),
+    )
+  ).results;
 
 export interface InstalledPackage {
   source: string;

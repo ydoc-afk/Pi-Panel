@@ -17,7 +17,6 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import {
-  IconBrandGithub,
   IconGitBranch,
   IconFlask,
   IconFolder,
@@ -44,7 +43,7 @@ import {
   type Provider,
   type Session,
 } from './api.js';
-import { GitHubPanel } from './GitHubPanel.js';
+import { RepositoryPanel } from './RepositoryPanel.js';
 import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { ProjectMcp } from './ProjectMcp.js';
@@ -310,11 +309,8 @@ export function ProjectView({
           <Tabs.Tab value="sessions" leftSection={<IconTerminal2 size={16} />}>
             Sessions
           </Tabs.Tab>
-          <Tabs.Tab value="github" leftSection={<IconBrandGithub size={16} />}>
-            GitHub
-          </Tabs.Tab>
-          <Tabs.Tab value="forgejo" leftSection={<IconGitBranch size={16} />}>
-            Forgejo
+          <Tabs.Tab value="repository" leftSection={<IconGitBranch size={16} />}>
+            Repository
           </Tabs.Tab>
           <Tabs.Tab value="mcp" leftSection={<IconPlug size={16} />}>
             MCP
@@ -390,11 +386,8 @@ export function ProjectView({
         </Tabs.Panel>
 
         <FlatSection>
-          <Tabs.Panel value="github">
-            <GitHubPanel projectId={projectId} />
-          </Tabs.Panel>
-          <Tabs.Panel value="forgejo">
-            <GitHubPanel projectId={projectId} forge="forgejo" />
+          <Tabs.Panel value="repository">
+            <RepositoryPanel projectId={projectId} />
           </Tabs.Panel>
           <Tabs.Panel value="mcp">
             <ProjectMcp projectId={projectId} />

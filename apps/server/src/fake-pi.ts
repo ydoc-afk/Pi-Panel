@@ -271,6 +271,20 @@ export class FakePiProcess implements RunningProcess {
       const answer = this.uiAnswers.get(askId);
       message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
     }
+    // "/pr <json>" is what the open_pull_request tool does, through its own reserved dialog.
+    if (message.startsWith('/pr ')) {
+      const askId = `ui-${++this.uiSeq}`;
+      this.send({
+        type: 'extension_ui_request',
+        id: askId,
+        method: 'input',
+        title: '@pi-panel/pull-request',
+        placeholder: message.slice(4),
+      });
+      while (!this.uiAnswers.has(askId) && !run.aborted && !this.dead) await tick();
+      const answer = this.uiAnswers.get(askId);
+      message = `result: ${answer?.cancelled ? 'cancelled' : String(answer?.value)}`;
+    }
     // "/fail <text>" ends the turn like a rejected model call: no text, stopReason "error".
     const failure = message.startsWith('/fail ') ? message.slice(6) : null;
     const reply = message === '/hang' || failure !== null ? '' : `You said: ${message}`;

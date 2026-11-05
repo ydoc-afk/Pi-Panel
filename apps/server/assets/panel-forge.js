@@ -1,10 +1,12 @@
 // pi extension the panel installs in a project's agent dir when the project is linked to a GitHub or
-// Forgejo repository. The sandbox holds no credentials, so push_to_repo does not push: it asks pi for
-// an input dialog with a reserved title, the panel turns that into a confirmation for the user, and
-// pushes from the host once they agree. The answer to the dialog is the outcome.
+// Forgejo repository. The sandbox holds no credentials, so push_to_repo and open_pull_request do not
+// act themselves: each asks pi for an input dialog with a reserved title, the panel turns that into a
+// confirmation for the user, and acts from the host once they agree. The answer to the dialog is the
+// outcome.
 import { Type } from 'typebox';
 
 const PUSH_DIALOG_TITLE = '@pi-panel/push';
+const PR_DIALOG_TITLE = '@pi-panel/pull-request';
 
 export default function (pi) {
   pi.registerTool({
@@ -16,6 +18,11 @@ export default function (pi) {
       'credentials. Commit your changes first (uncommitted changes are committed for you with the ' +
       'message, if given). Never run git push yourself: this sandbox has no credentials.',
     parameters: Type.Object({
+      repo: Type.Optional(
+        Type.String({
+          description: 'owner/name of the repository, needed only when several are included.',
+        }),
+      ),
       branch: Type.String({
         description: 'Branch to push, usually the output of `git branch --show-current`.',
       }),
@@ -30,6 +37,7 @@ export default function (pi) {
       const request = {
         branch: params.branch,
         ...(params.message ? { message: params.message } : {}),
+        ...(params.repo ? { repo: params.repo } : {}),
       };
       const answer = await ctx.ui.input(PUSH_DIALOG_TITLE, JSON.stringify(request));
       if (answer === undefined) {
@@ -55,6 +63,71 @@ export default function (pi) {
             text:
               `Pushed branch "${result.branch}" to ${result.repo} at ${commit}` +
               (result.committed ? ' (uncommitted changes were committed first).' : '.'),
+          },
+        ],
+        details: result,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: 'open_pull_request',
+    label: 'Open pull request',
+    description:
+      "Open a pull request on this project's linked GitHub or Forgejo repository. Push the branch " +
+      'first with push_to_repo. The user is shown a confirmation and the pull request is opened ' +
+      "with the panel's own account only if they approve; you never handle credentials, and the " +
+      "forge's HTTP API is not reachable with one from this sandbox, so do not try curl or node.",
+    parameters: Type.Object({
+      repo: Type.Optional(
+        Type.String({
+          description: 'owner/name of the repository, needed only when several are included.',
+        }),
+      ),
+      head: Type.String({ description: 'The pushed branch with your changes.' }),
+      title: Type.String({ description: 'Pull request title.' }),
+      body: Type.Optional(Type.String({ description: 'Pull request description (Markdown).' })),
+      base: Type.Optional(
+        Type.String({ description: "Branch to merge into; the repository's default if omitted." }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      if (!ctx?.hasUI) {
+        throw new Error('No user interface is attached, so the pull request cannot be confirmed.');
+      }
+      const request = {
+        ...(params.repo ? { repo: params.repo } : {}),
+        head: params.head,
+        title: params.title,
+        ...(params.body ? { body: params.body } : {}),
+        ...(params.base ? { base: params.base } : {}),
+      };
+      const answer = await ctx.ui.input(PR_DIALOG_TITLE, JSON.stringify(request));
+      if (answer === undefined) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: 'The user declined to open the pull request. Do not retry unless asked.',
+            },
+          ],
+          details: { declined: true },
+        };
+      }
+      let result;
+      try {
+        result = JSON.parse(answer);
+      } catch {
+        throw new Error('The panel sent an unexpected reply.');
+      }
+      if (!result.ok) throw new Error(`Opening the pull request failed: ${result.error}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text:
+              `Opened pull request${result.number ? ` #${result.number}` : ''} ` +
+              `(${result.head} into ${result.base}): ${result.url}`,
           },
         ],
         details: result,

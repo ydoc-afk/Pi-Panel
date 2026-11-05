@@ -175,6 +175,29 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
         applied_runtime: "TEXT NOT NULL DEFAULT 'base'",
       }),
   },
+  {
+    // A project can hold several repositories. folder is relative to the workspace ('' is the
+    // workspace root, where a project's first repository always was), and included says whether the
+    // panel's pull/push-all and the agent's push and pull request tools may use it.
+    // projects.repo / repo_host stay as a mirror of the first row, for lists and the dashboard.
+    version: 7,
+    name: 'several repositories per project',
+    up: (db) => {
+      db.exec(`CREATE TABLE IF NOT EXISTS project_repos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        host TEXT NOT NULL,
+        repo TEXT NOT NULL,
+        folder TEXT NOT NULL DEFAULT '',
+        included INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        UNIQUE (project_id, folder),
+        UNIQUE (project_id, host, repo)
+      )`);
+      db.exec(`INSERT OR IGNORE INTO project_repos (project_id, host, repo, folder, included, created_at)
+        SELECT id, COALESCE(repo_host, 'github'), repo, '', 1, created_at FROM projects WHERE repo IS NOT NULL`);
+    },
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {
