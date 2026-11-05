@@ -5,7 +5,7 @@ import Fastify from 'fastify';
 import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import type { DatabaseSync } from 'node:sqlite';
-import { registerAuth } from './auth.js';
+import { currentUser, registerAuth } from './auth.js';
 import { registerDashboard } from './dashboard.js';
 import { openDefaultDb, schemaVersion } from './db.js';
 import { registerGuards } from './guards.js';
@@ -149,7 +149,7 @@ export function buildApp(opts: AppOptions = {}) {
     registerMcp(app, mcp);
     registerSamples(app, samples);
     registerMcpRegistry(app, opts.fetch ?? fetch);
-    registerSessions(app, sessions);
+    registerSessions(app, sessions, (req) => currentUser(db, req)?.role === 'admin');
     registerDashboard(app, { db, runtime, providers, mcp: mcpStore, github, forgejo });
     // Lets the UI warn before a project is created when the sandbox image has not been built.
     app.get('/api/sandbox', async () => ({
