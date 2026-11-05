@@ -28,7 +28,9 @@ read a newer schema, so rolling back across a migration means restoring the data
 
 1. Run the real-pi tests against the new version (see `docs/mcp.md` and `docs/package-lab.md`).
 2. Bump `PI_VERSION`, rebuild the image (`docker compose --profile build-only build sandbox-base`).
-3. Press **Recreate container** on each project so it uses the new image. The workspace and pi's agent
+3. Rebuild any runtime images you use (Runtime tab; ones built on the old base are marked), since they
+   are layered on the base image.
+4. Press **Recreate container** on each project so it uses the new image. The workspace and pi's agent
    dir are bind-mounted, so files and pi session history are kept. The About box (account menu) shows
    the pi version the sandbox image was built with.
 

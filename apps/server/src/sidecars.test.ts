@@ -222,6 +222,7 @@ describe('managed MCP servers', () => {
       // the session container is created with only its workspace and agent dir, never the samples
       expect(Object.keys([...t.runtime.containers.values()][0]!).sort()).toEqual([
         'agentDir',
+        'image',
         'projectId',
         'workspacePath',
       ]);

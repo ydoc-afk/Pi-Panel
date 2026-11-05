@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance } from 'fastify';
 import { SANDBOX_UID, agentDir, workspaceDir } from './paths.js';
 import type { ContainerRuntime } from './runtime.js';
+import { BASE_RUNTIME, findRuntime, imageFor } from './runtimes.js';
 
 interface ProjectRow {
   id: number;
@@ -10,6 +11,8 @@ interface ProjectRow {
   container_id: string | null;
   status: string;
   repo: string | null;
+  runtime: string;
+  applied_runtime: string;
   created_at: number;
 }
 
@@ -20,6 +23,9 @@ const toDto = (r: ProjectRow) => ({
   name: r.name,
   status: r.status,
   repo: r.repo,
+  runtime: r.runtime,
+  // The container was made from a different runtime image; Recreate applies the change.
+  runtimePending: r.container_id !== null && r.runtime !== r.applied_runtime,
   createdAt: r.created_at,
 });
 
@@ -76,12 +82,38 @@ export function registerProjects(
   });
 
   async function createContainer(id: number): Promise<string> {
-    return runtime.createAndStart({
+    const chosen = find(id)?.runtime ?? BASE_RUNTIME;
+    const image = imageFor(runtime, findRuntime(chosen) ? chosen : BASE_RUNTIME);
+    // A variant removed from the Docker host fails here with a clear message, not "no such image".
+    if (chosen !== BASE_RUNTIME && !(await runtime.imageInfo(image))) {
+      throw new Error(`The image ${image} is not on this machine`);
+    }
+    const containerId = await runtime.createAndStart({
       projectId: id,
       workspacePath: workspaceFor(id),
       agentDir: agentFor(id),
+      image,
     });
+    db.prepare('UPDATE projects SET applied_runtime = ? WHERE id = ?').run(chosen, id);
+    return containerId;
   }
+
+  // Chooses the runtime image for the next container. The running container is not touched.
+  app.patch<{ Params: { id: string } }>('/api/projects/:id', async (req, reply) => {
+    const id = Number(req.params.id);
+    const row = find(id);
+    if (!row) return reply.code(404).send({ error: 'Project not found' });
+    const { runtime: chosen } = (req.body ?? {}) as { runtime?: unknown };
+    const variant = findRuntime(chosen);
+    if (!variant) return reply.code(400).send({ error: 'Unknown runtime' });
+    if (!(await runtime.imageInfo(imageFor(runtime, variant.id)))) {
+      return reply.code(409).send({
+        error: `The ${variant.label} runtime has not been built yet. Build it from the Runtimes card first.`,
+      });
+    }
+    db.prepare('UPDATE projects SET runtime = ? WHERE id = ?').run(variant.id, id);
+    return { project: toDto(find(id)!) };
+  });
 
   // Starts a stopped container, or makes a new one if it has gone missing.
   app.post<{ Params: { id: string } }>('/api/projects/:id/restart', async (req, reply) => {

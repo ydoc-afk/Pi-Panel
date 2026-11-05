@@ -46,6 +46,9 @@ export interface Project {
   name: string;
   status: string;
   repo: string | null;
+  runtime: string;
+  /** The running container was made from a different runtime image; Recreate applies the change. */
+  runtimePending: boolean;
   createdAt: number;
 }
 
@@ -71,6 +74,8 @@ export const deleteProject = (id: number) =>
   request<void>(`/api/projects/${id}`, { method: 'DELETE' });
 export const getProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}`)).project;
+export const setProjectRuntime = async (id: number, runtime: string) =>
+  (await request<{ project: Project }>(`/api/projects/${id}`, send('PATCH', { runtime }))).project;
 export const restartProject = async (id: number) =>
   (await request<{ project: Project }>(`/api/projects/${id}/restart`, json({}))).project;
 export const recreateProject = async (id: number) =>
@@ -683,3 +688,23 @@ export interface DashboardData {
 /** Everything the home dashboard shows. Days are bucketed in this browser's time zone. */
 export const getDashboard = () =>
   request<DashboardData>(`/api/dashboard?tz=${-new Date().getTimezoneOffset()}`);
+
+export interface RuntimeState {
+  id: string;
+  label: string;
+  description: string;
+  tag: string;
+  present: boolean;
+  /** Built on a base image that has since been rebuilt. */
+  stale: boolean;
+  sizeBytes: number | null;
+  build: {
+    status: 'idle' | 'building' | 'done' | 'failed';
+    log: string[];
+    error?: string;
+  };
+}
+export const listRuntimes = async () =>
+  (await request<{ runtimes: RuntimeState[] }>('/api/runtimes')).runtimes;
+export const buildRuntime = async (id: string) =>
+  (await request<{ runtimes: RuntimeState[] }>(`/api/runtimes/${id}/build`, send('POST'))).runtimes;

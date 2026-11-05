@@ -163,6 +163,18 @@ const MIGRATIONS: { version: number; name: string; up: (db: DatabaseSync) => voi
         last_error_at: 'INTEGER',
       }),
   },
+  {
+    // Which runtime image a project runs in (see runtimes.ts). applied_runtime is what the current
+    // container was made from, so the UI can say a change waits for Recreate. Existing containers
+    // were all made from the base image.
+    version: 6,
+    name: 'project runtime image',
+    up: (db) =>
+      addMissingColumns(db, 'projects', {
+        runtime: "TEXT NOT NULL DEFAULT 'base'",
+        applied_runtime: "TEXT NOT NULL DEFAULT 'base'",
+      }),
+  },
 ];
 
 export function openDb(path: string): DatabaseSync {
