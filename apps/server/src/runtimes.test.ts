@@ -19,7 +19,8 @@ async function settle(builder: RuntimeBuilder, id: string) {
 }
 
 describe('runtime variants', () => {
-  it('has a Dockerfile for every non-base variant, built on the base image', () => {
+  it('has a Dockerfile for every non-base profile, layered on its parent', () => {
+    expect(RUNTIME_VARIANTS.map((v) => v.id)).toEqual(['base', 'python', 'native', 'full']);
     for (const v of RUNTIME_VARIANTS.filter((x) => x.id !== 'base')) {
       const text = readFileSync(
         new URL(`../../../docker/runtimes/${v.id}/Dockerfile`, import.meta.url),
@@ -45,7 +46,7 @@ describe('RuntimeBuilder', () => {
 
   it('lists the base as present and the variants as not built', async () => {
     const list = await builder.list();
-    expect(list.map((r) => r.id)).toEqual(['base', 'python', 'build', 'go', 'rust', 'jvm']);
+    expect(list.map((r) => r.id)).toEqual(['base', 'python', 'native', 'full']);
     expect(list.find((r) => r.id === 'base')).toMatchObject({ present: true, stale: false });
     expect(list.find((r) => r.id === 'python')).toMatchObject({
       present: false,
@@ -63,7 +64,7 @@ describe('RuntimeBuilder', () => {
       buildArgs: { BASE_IMAGE: 'pi-panel/sandbox-base:latest', BASE_ID: 'sha256:base1' },
     });
     expect(builder.latestLog('python')).toContain('Image built');
-    expect(builder.latestLog('go')).toBeNull();
+    expect(builder.latestLog('native')).toBeNull();
   });
 
   it('marks a variant stale once the base image is rebuilt', async () => {
@@ -75,10 +76,59 @@ describe('RuntimeBuilder', () => {
 
   it('reports a failed build with its error', async () => {
     runtime.buildFailure = 'apt-get failed';
-    await builder.start('go');
-    const state = await settle(builder, 'go');
+    await builder.start('python');
+    const state = await settle(builder, 'python');
     expect(state.build).toMatchObject({ status: 'failed', error: 'apt-get failed' });
     expect(state.present).toBe(false);
+  });
+
+  it('builds missing parent profiles first, in order, and layers each on the previous', async () => {
+    await builder.start('full');
+    await settle(builder, 'full');
+    expect(runtime.builds.map((b) => b.tag)).toEqual([
+      'pi-panel/sandbox-python:latest',
+      'pi-panel/sandbox-native:latest',
+      'pi-panel/sandbox-full:latest',
+    ]);
+    expect(runtime.builds.map((b) => b.buildArgs.BASE_IMAGE)).toEqual([
+      'pi-panel/sandbox-base:latest',
+      'pi-panel/sandbox-python:latest',
+      'pi-panel/sandbox-native:latest',
+    ]);
+    expect((await builder.list()).filter((r) => r.present).map((r) => r.id)).toEqual([
+      'base',
+      'python',
+      'native',
+      'full',
+    ]);
+  });
+
+  it('skips parents that already exist, and marks a child stale when its parent is rebuilt', async () => {
+    await builder.start('python');
+    await settle(builder, 'python');
+    await builder.start('native');
+    await settle(builder, 'native');
+    expect(runtime.builds.map((b) => b.tag)).toEqual([
+      'pi-panel/sandbox-python:latest',
+      'pi-panel/sandbox-native:latest',
+    ]);
+    runtime.imageInfos.set('pi-panel/sandbox-python:latest', {
+      id: 'sha256:python-rebuilt',
+      sizeBytes: 1,
+      labels: {},
+    });
+    const list = await builder.list();
+    expect(list.find((r) => r.id === 'native')!.stale).toBe(true);
+  });
+
+  it('fails the queued profiles when a parent fails', async () => {
+    runtime.buildFailure = 'apt-get failed';
+    await builder.start('native');
+    await settle(builder, 'native');
+    const list = await builder.list();
+    expect(list.find((r) => r.id === 'python')!.build.status).toBe('failed');
+    expect(list.find((r) => r.id === 'native')!.build.status).toBe('failed');
+    expect(runtime.builds).toHaveLength(1);
   });
 
   it('refuses unknown runtimes, the base, a missing base image and parallel builds', async () => {
@@ -90,7 +140,7 @@ describe('RuntimeBuilder', () => {
     let release!: () => void;
     runtime.buildGate = new Promise<void>((r) => (release = r));
     await builder.start('python');
-    await expect(builder.start('go')).rejects.toMatchObject({ status: 409 });
+    await expect(builder.start('native')).rejects.toMatchObject({ status: 409 });
     release();
     await settle(builder, 'python');
   });
@@ -161,9 +211,9 @@ describe('project runtime selection', () => {
 
   it('fails recreate when the chosen image has disappeared', async () => {
     const { project } = (await call('POST', '/api/projects', { name: 'p' })).json();
-    await build('go');
-    await call('PATCH', `/api/projects/${project.id}`, { runtime: 'go' });
-    runtime.images.delete(imageFor(runtime, 'go'));
+    await build('native');
+    await call('PATCH', `/api/projects/${project.id}`, { runtime: 'native' });
+    runtime.images.delete(imageFor(runtime, 'native'));
     const re = await call('POST', `/api/projects/${project.id}/recreate`, {});
     expect(re.statusCode).toBe(502);
   });

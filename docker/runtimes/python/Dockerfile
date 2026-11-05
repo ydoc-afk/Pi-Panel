@@ -1,6 +1,6 @@
 # Runtime variant of the sandbox image. Built by the panel (Runtimes card) or by hand:
 #   docker build -t pi-panel/sandbox-python:latest --build-arg BASE_IMAGE=pi-panel/sandbox-base:latest docker/runtimes/python
-# BASE_ID records which base image this was built on, so the panel can tell when it has gone stale.
+# BASE_ID is the id of the image built on (the sandbox image here), so the panel can tell when it has gone stale.
 ARG BASE_IMAGE=pi-panel/sandbox-base:latest
 FROM ${BASE_IMAGE}
 ARG BASE_ID=unknown
