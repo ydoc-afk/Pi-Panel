@@ -12,6 +12,7 @@ import {
 import type { StreamMessage } from './api.js';
 import { ExtensionDialog, ExtensionStatus, ExtensionWidgets } from './ExtensionUi.js';
 import { TaskList } from './TaskList.js';
+import { PiControls } from './PiControls.js';
 import { ErrorText, Tip } from './ui.js';
 import { parseBlocks, parseSpans } from './termMarkdown.js';
 
@@ -477,6 +478,7 @@ export function SessionView({ sessionId, name }: { sessionId: number; name?: str
           '@keyframes pp-cursor { 50% { opacity: 0; } } @keyframes pp-blink { 50% { opacity: 0.25; } } .pp-blink { animation: pp-blink 1s steps(1) infinite; }'
         }
       </style>
+      <PiControls sessionId={sessionId} working={t.running} />
       <div
         style={{
           background: TERM.bg,
