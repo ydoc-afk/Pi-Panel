@@ -3,8 +3,28 @@
  * no forge credentials on purpose, so it cannot push itself: it asks through push_to_repo and the
  * user approves in the panel. Without this note agents go looking for tokens and ask the user for one.
  */
-export function agentNote(repo: string | null, host: string | null): string | null {
-  if (!repo) return null;
+export function agentNote(
+  repo: string | null,
+  host: string | null,
+  runtime: string | null = null,
+): string | null {
+  const parts = [
+    repo ? publishingNote(repo, host) : null,
+    runtime ? runtimeSection(runtime) : null,
+  ];
+  const text = parts.filter((p): p is string => p !== null).join('\n');
+  return text === '' ? null : text;
+}
+
+/** Which toolchains the sandbox has, so the agent tests with them instead of assuming none exist. */
+function runtimeSection(note: string): string {
+  return `# Tools in this sandbox
+
+${note}
+`;
+}
+
+function publishingNote(repo: string, host: string | null): string {
   const forge = host === 'forgejo' ? 'Forgejo' : 'GitHub';
   return `# Publishing your work
 

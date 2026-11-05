@@ -27,6 +27,7 @@ import {
   IconPlug,
   IconPlus,
   IconRefresh,
+  IconStack2,
   IconTerminal2,
   IconX,
 } from '@tabler/icons-react';
@@ -47,6 +48,7 @@ import { GitHubPanel } from './GitHubPanel.js';
 import { Lab } from './Lab.js';
 import { Packages } from './Packages.js';
 import { ProjectMcp } from './ProjectMcp.js';
+import { Runtimes } from './Runtimes.js';
 import { ProjectStatusBadge } from './ProjectStatusBadge.js';
 import { navigate } from './router.js';
 import { SessionView } from './SessionView.js';
@@ -169,7 +171,7 @@ export function ProjectView({
     if (
       action === 'recreate' &&
       !(await askConfirm(
-        'Replace the container with a fresh one from the current sandbox image? Running sessions stop. ' +
+        "Replace the container with a fresh one from this project's runtime image? Running sessions stop. " +
           'Workspace files and session history are kept; anything installed elsewhere in the container is not.',
       ))
     ) {
@@ -271,6 +273,7 @@ export function ProjectView({
               <Text size="sm" c="dimmed">
                 {sessions.length} session{sessions.length === 1 ? '' : 's'}
                 {project.repo ? ` · ${project.repo}` : ''}
+                {project.runtime !== 'base' ? ` · ${project.runtime} runtime` : ''}
               </Text>
             </Stack>
           </Group>
@@ -321,6 +324,9 @@ export function ProjectView({
           </Tabs.Tab>
           <Tabs.Tab value="lab" leftSection={<IconFlask size={16} />}>
             Lab
+          </Tabs.Tab>
+          <Tabs.Tab value="runtime" leftSection={<IconStack2 size={16} />}>
+            Runtime
           </Tabs.Tab>
         </Tabs.List>
 
@@ -398,6 +404,14 @@ export function ProjectView({
           </Tabs.Panel>
           <Tabs.Panel value="lab">
             <Lab projectId={projectId} />
+          </Tabs.Panel>
+          <Tabs.Panel value="runtime">
+            <Runtimes
+              project={project}
+              busy={busy}
+              onChange={setProject}
+              onRecreate={() => void containerAction('recreate')}
+            />
           </Tabs.Panel>
         </FlatSection>
       </Tabs>

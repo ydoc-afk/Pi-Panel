@@ -6,6 +6,8 @@ export interface ContainerSpec {
   workspacePath: string;
   /** Host dir mounted as pi's agent dir inside the container. */
   agentDir: string;
+  /** Image to create the container from; the configured sandbox image when omitted. */
+  image?: string;
 }
 
 /** A process running inside a container, with piped stdio. */
@@ -84,6 +86,10 @@ export interface ContainerRuntime {
   start(containerId: string): Promise<void>;
   /** Labels on a local image, or null if the image is absent. */
   imageLabels(tag: string): Promise<Record<string, string> | null>;
+  /** The tag of the base sandbox image (SANDBOX_IMAGE or the default). */
+  baseImage(): string;
+  /** Id, size and labels of a local image, or null if the image is absent. */
+  imageInfo(tag: string): Promise<ImageInfo | null>;
   /** Starts a process in a running container with stdin/stdout/stderr attached. */
   exec(containerId: string, spec: ExecSpec): Promise<RunningProcess>;
   /** Runs a command to completion in a new throwaway container, then removes it. */
@@ -106,6 +112,12 @@ export interface ContainerRuntime {
   imageExists(tag: string): Promise<boolean>;
   /** Builds an image from a tar build context. Each build log line goes to onLog. Rejects on failure. */
   buildImage(spec: BuildSpec): Promise<void>;
+}
+
+export interface ImageInfo {
+  id: string;
+  sizeBytes: number;
+  labels: Record<string, string>;
 }
 
 export interface BuildSpec {
@@ -190,6 +202,26 @@ export class FakeRuntime implements ContainerRuntime {
   async imageLabels(tag: string): Promise<Record<string, string> | null> {
     if (tag === 'sandbox') return this.sandboxImageAvailable ? this.sandboxLabels : null;
     return this.images.has(tag) ? {} : null;
+  }
+
+  baseImage(): string {
+    return 'pi-panel/sandbox-base:latest';
+  }
+
+  /** Labels and ids for images the fake daemon holds; builds fill this in from build args. */
+  readonly imageInfos = new Map<string, ImageInfo>();
+  /** Id reported for the base image. Change it to simulate a rebuilt base. */
+  baseImageId = 'sha256:base1';
+
+  async imageInfo(tag: string): Promise<ImageInfo | null> {
+    if (tag === this.baseImage()) {
+      return this.sandboxImageAvailable
+        ? { id: this.baseImageId, sizeBytes: 400e6, labels: this.sandboxLabels }
+        : null;
+    }
+    return this.images.has(tag)
+      ? (this.imageInfos.get(tag) ?? { id: `sha256:${tag}`, sizeBytes: 1e6, labels: {} })
+      : null;
   }
 
   async exec(containerId: string, spec: ExecSpec): Promise<RunningProcess> {
@@ -295,6 +327,11 @@ export class FakeRuntime implements ContainerRuntime {
     }
     spec.onLog('Successfully built fake');
     this.images.add(spec.tag);
+    this.imageInfos.set(spec.tag, {
+      id: `sha256:${spec.tag}`,
+      sizeBytes: 800e6,
+      labels: { 'org.pi-panel.base-id': spec.buildArgs.BASE_ID ?? '' },
+    });
   }
 
   async sidecarLogs(id: string, tail: number): Promise<string> {

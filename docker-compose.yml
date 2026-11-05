@@ -38,3 +38,41 @@ services:
         GHIDRA_SHA256: ${GHIDRA_SHA256:-}
     image: pi-panel/rea:6.8.0
     profiles: ['build-only']
+
+  # Runtime variants of the sandbox image (Python, Go, ...). Optional; projects pick one in their
+  # Runtime tab, which can also build them. Build the sandbox-base image first.
+  sandbox-python:
+    build:
+      context: ./docker/runtimes/python
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-python:latest
+    profiles: ['build-only']
+  sandbox-build:
+    build:
+      context: ./docker/runtimes/build
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-build:latest
+    profiles: ['build-only']
+  sandbox-go:
+    build:
+      context: ./docker/runtimes/go
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-go:latest
+    profiles: ['build-only']
+  sandbox-rust:
+    build:
+      context: ./docker/runtimes/rust
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-rust:latest
+    profiles: ['build-only']
+  sandbox-jvm:
+    build:
+      context: ./docker/runtimes/jvm
+      args:
+        BASE_IMAGE: pi-panel/sandbox-base:latest
+    image: pi-panel/sandbox-jvm:latest
+    profiles: ['build-only']

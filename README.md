@@ -117,6 +117,11 @@ Settings in `docker-compose.yml` (set the `PI_PANEL_*` variables in your shell o
 
 Resource limits apply to containers created or recreated after you change them.
 
+Optional: runtime images give a project's container more than Node: Python, C/C++ build tools, Go, Rust
+or Java. Open a project's **Runtime** tab, build the ones you want (they are layered on the sandbox
+image), pick one, and recreate the container. The agent is told what is installed. See
+[docs/runtimes.md](docs/runtimes.md).
+
 Optional: the REA reverse-engineering image needs a Ghidra release you choose and verify. In the MCP tab,
 paste its download link and SHA-256 checksum and press **Build REA image**, or build it by hand (see
 [docs/rea.md](docs/rea.md)).

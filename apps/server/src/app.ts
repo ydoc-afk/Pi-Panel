@@ -22,6 +22,7 @@ import { PackageService, registerPackages, type PackageOptions } from './package
 import { ProviderStore, registerProviders } from './providers.js';
 import { registerMcpRegistry } from './mcp-registry.js';
 import { ReaBuilder, ReaBuildError } from './rea-build.js';
+import { RuntimeBuilder, RuntimeBuildError } from './runtimes.js';
 import { registerProjects } from './projects.js';
 import { Secrets } from './secrets.js';
 import { SessionManager, registerSessions } from './sessions.js';
@@ -119,6 +120,7 @@ export function buildApp(opts: AppOptions = {}) {
   const mcp = new McpService(db, mcpStore, runtime, sessions, sidecars, opts.mcp);
   const lab = new LabService(db, runtime, dataDir, opts.lab);
   const rea = new ReaBuilder(runtime, { dataDir });
+  const runtimes = new RuntimeBuilder(runtime, { dataDir });
   const packages = new PackageService(db, runtime, sessions, dataDir, {
     fetch: opts.fetch,
     ...opts.packages,
@@ -171,6 +173,23 @@ export function buildApp(opts: AppOptions = {}) {
           piVersion: labels?.['org.pi-panel.pi-version'] ?? null,
         },
       };
+    });
+    // Runtime images projects can choose (Python, Go, ...), built on this machine from the base image.
+    app.get('/api/runtimes', async () => ({ runtimes: await runtimes.list() }));
+    app.post<{ Params: { id: string } }>('/api/runtimes/:id/build', async (req, reply) => {
+      try {
+        await runtimes.start(req.params.id);
+      } catch (err) {
+        if (err instanceof RuntimeBuildError)
+          return reply.code(err.status).send({ error: err.message });
+        throw err;
+      }
+      return reply.code(202).send({ runtimes: await runtimes.list() });
+    });
+    app.get<{ Params: { id: string } }>('/api/runtimes/:id/log', (req, reply) => {
+      const text = runtimes.latestLog(req.params.id);
+      if (text === null) return reply.code(404).send({ error: 'No build has been logged yet' });
+      return reply.type('text/plain; charset=utf-8').send(text);
     });
     app.get('/api/rea', () => rea.status());
     app.post('/api/rea/build', async (req, reply) => {

@@ -10,6 +10,7 @@ import type {
   EphemeralSpec,
   ExecResult,
   ExecSpec,
+  ImageInfo,
   RunningProcess,
   SidecarSpec,
   SidecarState,
@@ -83,7 +84,7 @@ export class DockerRuntime implements ContainerRuntime {
   async createAndStart(spec: ContainerSpec): Promise<string> {
     const limits = sandboxLimits();
     const container = await this.docker.createContainer({
-      Image: this.image,
+      Image: spec.image ?? this.image,
       Labels: { 'pi-panel.project': String(spec.projectId) },
       HostConfig: {
         Binds: [
@@ -138,6 +139,20 @@ export class DockerRuntime implements ContainerRuntime {
     try {
       const info = await this.docker.getImage(tag === 'sandbox' ? this.image : tag).inspect();
       return info.Config?.Labels ?? {};
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 404) return null;
+      throw err;
+    }
+  }
+
+  baseImage(): string {
+    return this.image;
+  }
+
+  async imageInfo(tag: string): Promise<ImageInfo | null> {
+    try {
+      const info = await this.docker.getImage(tag).inspect();
+      return { id: info.Id, sizeBytes: info.Size, labels: info.Config?.Labels ?? {} };
     } catch (err) {
       if ((err as { statusCode?: number }).statusCode === 404) return null;
       throw err;

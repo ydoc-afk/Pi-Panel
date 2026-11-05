@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { agentNote } from './agent-note.js';
+import { runtimeNote } from './runtimes.js';
 import {
   PUSH_DIALOG_TITLE,
   describePush,
@@ -368,19 +369,28 @@ export class SessionManager {
     // AGENTS.md in the agent dir is pi's global context. Removed when the project has no repository,
     // so unlinking one does not leave stale instructions behind.
     const link = this.db
-      .prepare('SELECT repo, repo_host FROM projects WHERE id = ?')
-      .get(projectId) as { repo: string | null; repo_host: string | null } | undefined;
-    const note = agentNote(link?.repo ?? null, link?.repo_host ?? null);
+      .prepare('SELECT repo, repo_host, applied_runtime FROM projects WHERE id = ?')
+      .get(projectId) as
+      { repo: string | null; repo_host: string | null; applied_runtime: string } | undefined;
+    const note = agentNote(
+      link?.repo ?? null,
+      link?.repo_host ?? null,
+      // The container's runtime, not the one chosen for the next recreate.
+      link ? runtimeNote(link.applied_runtime) : null,
+    );
     const extension = join(dir, 'extensions', 'panel-forge.js');
     if (note) {
       const tmp = join(dir, 'AGENTS.md.tmp');
       await writeFile(tmp, note, { mode: 0o644 });
       await rename(tmp, join(dir, 'AGENTS.md'));
+    } else {
+      await rm(join(dir, 'AGENTS.md'), { force: true });
+    }
+    if (link?.repo) {
       // The push tool the note refers to: installed only where there is a repository to push to.
       await mkdir(join(dir, 'extensions'), { recursive: true });
       await writeFile(extension, await readFile(FORGE_EXTENSION), { mode: 0o644 });
     } else {
-      await rm(join(dir, 'AGENTS.md'), { force: true });
       await rm(extension, { force: true });
     }
     return mcp;
