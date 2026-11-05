@@ -1,8 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Button, Group, Modal, Stack, Text, TextInput, Textarea } from '@mantine/core';
-import { respondUi } from './api.js';
+import { getStatus, respondUi } from './api.js';
 import type { UiDialog, UiState } from './transcript.js';
 import { ErrorText } from './ui.js';
+
+/** Whether the signed-in user is the admin; read once. Treated as no until it is known. */
+let adminCheck: Promise<boolean> | undefined;
+const checkAdmin = () =>
+  (adminCheck ??= getStatus().then(
+    (s) => s.user?.role === 'admin',
+    () => false,
+  ));
 
 /** The question the oldest open extension dialog asks; closing it declines. */
 export function ExtensionDialog({
@@ -15,6 +23,11 @@ export function ExtensionDialog({
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [admin, setAdmin] = useState(false);
+
+  useEffect(() => {
+    void checkAdmin().then(setAdmin);
+  }, []);
 
   useEffect(() => {
     setText(dialog?.prefill ?? '');
@@ -88,6 +101,11 @@ export function ExtensionDialog({
               styles={{ input: { fontFamily: 'ui-monospace, Menlo, Consolas, monospace' } }}
             />
           )}
+          {dialog.method === 'confirm' && dialog.adminOnly && !admin && (
+            <Text size="sm" c="dimmed">
+              Only the admin can approve this. You can decline it.
+            </Text>
+          )}
           <ErrorText error={error} />
           <Group justify="flex-end" gap="xs">
             <Button
@@ -97,7 +115,7 @@ export function ExtensionDialog({
             >
               {dialog.method === 'confirm' ? 'No' : 'Cancel'}
             </Button>
-            {dialog.method === 'confirm' && (
+            {dialog.method === 'confirm' && (!dialog.adminOnly || admin) && (
               <Button disabled={busy} onClick={() => void answer({ confirmed: true })}>
                 Yes
               </Button>

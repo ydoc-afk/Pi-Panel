@@ -20,6 +20,8 @@ export interface UiDialog {
   options?: string[];
   placeholder?: string;
   prefill?: string;
+  /** Only the admin may say yes (a push or pull request under their forge account). */
+  adminOnly?: boolean;
 }
 
 export interface UiWidget {
@@ -163,6 +165,7 @@ function applyUiRequest(t: Transcript, e: Record<string, unknown>, seq: number):
           : {}),
         ...(typeof e.placeholder === 'string' ? { placeholder: e.placeholder } : {}),
         ...(typeof e.prefill === 'string' ? { prefill: e.prefill } : {}),
+        ...(e.panelAdminOnly === true ? { adminOnly: true } : {}),
       };
       return { ...t, ui: { ...ui, dialogs: [...ui.dialogs, dialog] } };
     }
